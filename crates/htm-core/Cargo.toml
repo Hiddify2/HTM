@@ -1,0 +1,31 @@
+[package]
+name = "htm-core"
+description = "Core orchestration engine for HTM (Hiddify Tunnel Manager)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# SSH transport. On Windows libssh2-sys builds the vendored C library against
+# WinCNG, so no OpenSSL is required. On Unix it links against the system
+# OpenSSL (libssl-dev / openssl-devel).
+ssh2 = "0.9.6"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+
+# Local secret vault.
+aes-gcm = "0.10.3"
+argon2 = "0.5.3"
+
+# Platform config/data directories.
+dirs = "5.0"

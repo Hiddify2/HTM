@@ -1,0 +1,26 @@
+[package]
+name = "htm-gui"
+description = "HTM (Hiddify Tunnel Manager) desktop application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "htm"
+path = "src/main.rs"
+
+[dependencies]
+htm-core = { path = "../htm-core" }
+
+# Pinned: egui's API changes between minor releases, and every widget call in
+# this crate is written against 0.28.
+eframe = "=0.28.1"
+egui = "=0.28.1"
+
+log = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

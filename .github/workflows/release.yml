@@ -1,0 +1,211 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish a nightly release from this run'
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  check:
+    name: Format, lint and test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev libwayland-dev libxkbcommon-dev
+
+      # Style is reported, not enforced: a formatting nit should never stop a
+      # release from being cut.
+      - name: Check formatting
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets
+
+      # Tests are the gate. They cover the parsing, rendering and scoring where
+      # being wrong is silent.
+      - name: Test
+        run: cargo test --workspace
+
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: ${{ matrix.label }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            # The binary itself, and the name it is published under.
+            binary: htm
+            asset: htm-linux-x86_64
+          - label: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: htm.exe
+            asset: htm-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Ubuntu 22.04 gives glibc 2.35, which covers every currently supported
+      # desktop distribution. libssh2 needs OpenSSL headers here; on Windows it
+      # builds against WinCNG and needs nothing extra.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev libwayland-dev libxkbcommon-dev
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --bin htm
+
+      - name: Stage the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+
+      - name: Record a checksum
+        shell: bash
+        working-directory: dist
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          fi
+          cat "${{ matrix.asset }}.sha256"
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  # ───────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Tags always publish. A manual run publishes only when asked to.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lah artifacts
+
+      - name: Work out the tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=nightly-$(date -u +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: HTM ${{ steps.tag.outputs.name }}
+          prerelease: ${{ steps.tag.outputs.prerelease }}
+          draft: false
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/htm-linux-x86_64
+            artifacts/htm-linux-x86_64.sha256
+            artifacts/htm-windows-x86_64.exe
+            artifacts/htm-windows-x86_64.exe.sha256
+          body: |
+            ## HTM — Hiddify Tunnel Manager ${{ steps.tag.outputs.name }}
+
+            ### Downloads
+
+            | File | Platform | Notes |
+            |------|----------|-------|
+            | `htm-windows-x86_64.exe` | Windows 10/11, 64-bit | Run it; nothing to install. |
+            | `htm-linux-x86_64` | Linux, 64-bit, glibc 2.35+ | `chmod +x htm-linux-x86_64 && ./htm-linux-x86_64` |
+
+            Each binary has a matching `.sha256` file. Verify with
+            `sha256sum -c htm-linux-x86_64.sha256`.
+
+            ### Linux runtime libraries
+
+            The Linux build is dynamically linked against the usual desktop
+            libraries. On a minimal system you may need:
+
+            ```sh
+            sudo apt install libgl1 libxkbcommon-x11-0 libssl3
+            ```
+
+            ### What HTM needs from your servers
+
+            Both hosts must be Linux with systemd, root or sudo access, and
+            `/dev/net/tun`. HTM installs everything else it needs itself.
