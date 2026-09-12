@@ -289,7 +289,6 @@ pub fn install(
         return Ok(report);
     };
 
-    let mut tail: Vec<String> = Vec::new();
     let status = client.run_script_stream(
         &format!("#!/bin/sh\nset -e\n{bulk}\n"),
         true,
@@ -301,10 +300,6 @@ pub fn install(
                 return;
             }
             reporter.log_line(LogLevel::Debug, Some(scope), line);
-            tail.push(line.to_string());
-            if tail.len() > 40 {
-                tail.remove(0);
-            }
         },
     )?;
 

@@ -17,8 +17,8 @@ use egui::Context;
 use htm_core::crypto::{KeySource, Vault};
 use htm_core::jobs::{self, JobEvent, JobHandle, JobKind, JobOutcome, JobPayload, LogLevel, LogLine};
 use htm_core::model::{
-    ServerCredentials, ServerProfile, ServerSecrets, ServiceAction, SpoofPlan, TunSlot,
-    TunnelInstance, TunnelSide,
+    ServerCredentials, ServerSecrets, ServiceAction, SpoofPlan, TunSlot, TunnelInstance,
+    TunnelSide,
 };
 use htm_core::orchestrator::{self, bench as bench_engine, PlanInputs};
 use htm_core::provider::{registry, ProviderRef};
@@ -230,10 +230,6 @@ impl HtmApp {
 
     pub fn known_hosts_path(&self) -> PathBuf {
         self.paths.known_hosts()
-    }
-
-    pub fn profile(&self, side: TunnelSide) -> Option<&ServerProfile> {
-        self.state.server(side)
     }
 
     /// Is a job of this kind currently running?

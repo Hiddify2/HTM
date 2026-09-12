@@ -254,6 +254,7 @@ pub trait Reporter: Send + Sync {
 }
 
 /// The [`Reporter`] that feeds a [`JobHandle`].
+#[derive(Debug)]
 pub struct ChannelReporter {
     tx: Sender<JobEvent>,
     cancel: Arc<AtomicBool>,
@@ -279,6 +280,7 @@ impl Reporter for ChannelReporter {
 
 /// A [`Reporter`] that throws everything away. Useful in tests and for
 /// operations that run without a UI.
+#[derive(Debug)]
 pub struct NullReporter;
 
 impl Reporter for NullReporter {
@@ -291,6 +293,7 @@ impl Reporter for NullReporter {
 static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The UI's handle on a running job.
+#[derive(Debug)]
 pub struct JobHandle {
     pub id: u64,
     pub kind: JobKind,

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::candytunnel::CandyTunnelProvider;
-use super::{ProviderRef, TunnelProvider};
+use super::ProviderRef;
 
 /// Every registered provider, in the order the UI should offer them.
 pub fn all() -> Vec<ProviderRef> {

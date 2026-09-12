@@ -162,6 +162,18 @@ pub struct HostCtx<'a> {
     pub cancel: &'a Arc<AtomicBool>,
 }
 
+impl std::fmt::Debug for HostCtx<'_> {
+    // `reporter` is a trait object with no Debug bound, so this is written by
+    // hand rather than derived.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostCtx")
+            .field("side", &self.side)
+            .field("scope", &self.scope)
+            .field("endpoint", &self.client.endpoint())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a> HostCtx<'a> {
     pub fn info(&self, text: &str) {
         self.reporter

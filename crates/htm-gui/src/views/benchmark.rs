@@ -685,7 +685,8 @@ fn table(app: &mut HtmApp, ui: &mut Ui, run: &BenchRun) {
                     // ── Rows ────────────────────────────────────────────────
                     for result in rows {
                         let selected =
-                            app.bench_ui.selected_variant.as_deref() == Some(&result.variant.id);
+                            app.bench_ui.selected_variant.as_deref()
+                                == Some(result.variant.id.as_str());
                         let metrics = result.outcome.metrics();
 
                         // Score
@@ -768,7 +769,7 @@ fn table(app: &mut HtmApp, ui: &mut Ui, run: &BenchRun) {
         }
     }
     if let Some(id) = clicked_row {
-        app.bench_ui.selected_variant = if app.bench_ui.selected_variant.as_deref() == Some(&id) {
+        app.bench_ui.selected_variant = if app.bench_ui.selected_variant.as_deref() == Some(id.as_str()) {
             None
         } else {
             Some(id)
@@ -822,7 +823,9 @@ fn sort_rows(rows: &mut [&BenchResult], sort: BenchSort, descending: bool) {
             return if descending { ordering.reverse() } else { ordering };
         }
 
-        let key = |r: &BenchResult| -> f64 {
+        // `sort_by` hands the comparator `&&BenchResult`, so the key function
+        // takes that rather than `&BenchResult`.
+        let key = |r: &&BenchResult| -> f64 {
             let m = r.outcome.metrics();
             match sort {
                 BenchSort::Score => r.score.unwrap_or(f64::MIN),

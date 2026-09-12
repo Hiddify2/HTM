@@ -162,7 +162,7 @@ impl ProxyConfig {
 }
 
 /// Which package manager the remote distribution uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PackageManager {
     Apt,
@@ -172,6 +172,10 @@ pub enum PackageManager {
     Apk,
     Zypper,
     /// Nothing recognised; HTM will refuse to install packages and say so.
+    ///
+    /// This is the default so that a `ServerFacts` that has not been filled in
+    /// yet cannot be mistaken for a host we know how to install on.
+    #[default]
     Unknown,
 }
 

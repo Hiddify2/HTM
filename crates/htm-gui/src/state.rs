@@ -126,10 +126,9 @@ pub struct ServersUi {
 }
 
 impl ServersUi {
-    pub fn secrets_for(&mut self, id: &str) -> &mut ServerSecrets {
-        self.secrets.entry(id.to_string()).or_default()
-    }
-
+    /// The expander flag for one server, created as false the first time it is
+    /// asked for. An associated function rather than a method so the caller can
+    /// borrow two of these maps at once.
     pub fn flag(map: &mut HashMap<String, bool>, id: &str) -> &mut bool {
         map.entry(id.to_string()).or_insert(false)
     }

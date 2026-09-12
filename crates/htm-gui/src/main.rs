@@ -41,7 +41,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(1);
     }
 
-    logging::init(&paths.log(), verbose);
+    let _log_file = logging::init(&paths.log(), verbose);
     log::info!("HTM {} starting, data folder {}", htm_core::VERSION, paths.root.display());
 
     // ── State ───────────────────────────────────────────────────────────────
