@@ -168,7 +168,7 @@ pub fn apply(ctx: &Context, palette: &Palette) {
     visuals.faint_bg_color = palette.surface_raised;
     visuals.code_bg_color = palette.inset;
 
-    visuals.window_stroke = Stroke::new(1.0, palette.border);
+    visuals.window_stroke = Stroke::new(1.0_f32, palette.border);
     visuals.window_rounding = Rounding::same(R_CARD);
     visuals.menu_rounding = Rounding::same(R_CONTROL);
 
@@ -177,40 +177,40 @@ pub fn apply(ctx: &Context, palette: &Palette) {
     visuals.error_fg_color = palette.error;
 
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
-    visuals.selection.stroke = Stroke::new(1.0, palette.accent);
+    visuals.selection.stroke = Stroke::new(1.0_f32, palette.accent);
 
     // Resting controls sit flush with the surface; interaction is what lifts
     // them, so the interface stays calm until the pointer moves.
     visuals.widgets.noninteractive.bg_fill = palette.surface;
     visuals.widgets.noninteractive.weak_bg_fill = palette.surface;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.border);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette.text_muted);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, palette.border);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, palette.text_muted);
     visuals.widgets.noninteractive.rounding = Rounding::same(R_CONTROL);
 
     visuals.widgets.inactive.bg_fill = palette.surface_raised;
     visuals.widgets.inactive.weak_bg_fill = palette.surface_raised;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, palette.text);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, palette.border);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, palette.text);
     visuals.widgets.inactive.rounding = Rounding::same(R_CONTROL);
 
     visuals.widgets.hovered.bg_fill = lerp_color(palette.surface_raised, palette.accent, 0.18);
     visuals.widgets.hovered.weak_bg_fill =
         lerp_color(palette.surface_raised, palette.accent, 0.18);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, palette.border_strong);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, palette.text);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, palette.border_strong);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, palette.text);
     visuals.widgets.hovered.rounding = Rounding::same(R_CONTROL);
 
     visuals.widgets.active.bg_fill = lerp_color(palette.surface_raised, palette.accent, 0.34);
     visuals.widgets.active.weak_bg_fill =
         lerp_color(palette.surface_raised, palette.accent, 0.34);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, palette.text);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, palette.accent);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, palette.text);
     visuals.widgets.active.rounding = Rounding::same(R_CONTROL);
 
     visuals.widgets.open.bg_fill = palette.surface_raised;
     visuals.widgets.open.weak_bg_fill = palette.surface_raised;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, palette.border_strong);
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, palette.text);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, palette.border_strong);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, palette.text);
     visuals.widgets.open.rounding = Rounding::same(R_CONTROL);
 
     ctx.set_visuals(visuals);

@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 use egui::Context;
 
 use htm_core::crypto::{KeySource, Vault};
-use htm_core::jobs::{self, JobEvent, JobHandle, JobKind, JobOutcome, JobPayload, LogLevel, LogLine};
+use htm_core::jobs::{
+    self, JobEvent, JobHandle, JobKind, JobOutcome, JobPayload, LogLevel, LogLine, Reporter,
+};
 use htm_core::model::{
     ServerCredentials, ServerSecrets, ServiceAction, SpoofPlan, TunSlot, TunnelInstance,
     TunnelSide,

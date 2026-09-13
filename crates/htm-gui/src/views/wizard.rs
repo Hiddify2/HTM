@@ -37,7 +37,7 @@ pub fn show(app: &mut HtmApp, ctx: &Context) {
         .frame(
             egui::Frame::none()
                 .fill(palette.surface)
-                .stroke(egui::Stroke::new(1.0, palette.border_strong))
+                .stroke(egui::Stroke::new(1.0_f32, palette.border_strong))
                 .rounding(egui::Rounding::same(crate::theme::R_CARD))
                 .inner_margin(egui::Margin::same(16.0)),
         )
@@ -309,7 +309,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
                 } else {
                     palette.inset
                 })
-                .stroke(egui::Stroke::new(if selected { 1.5 } else { 1.0 }, accent))
+                .stroke(egui::Stroke::new(if selected { 1.5_f32 } else { 1.0_f32 }, accent))
                 .rounding(egui::Rounding::same(crate::theme::R_CONTROL))
                 .inner_margin(egui::Margin::same(12.0))
                 .show(ui, |ui| {

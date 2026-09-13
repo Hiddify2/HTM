@@ -37,7 +37,7 @@ pub fn show(app: &mut HtmApp, ctx: &Context) {
         .frame(
             egui::Frame::none()
                 .fill(palette.surface)
-                .stroke(egui::Stroke::new(1.0, palette.border_strong))
+                .stroke(egui::Stroke::new(1.0_f32, palette.border_strong))
                 .rounding(egui::Rounding::same(R_CARD))
                 .inner_margin(egui::Margin::same(16.0)),
         )

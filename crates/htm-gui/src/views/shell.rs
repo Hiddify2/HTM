@@ -147,7 +147,7 @@ fn mark(ui: &mut egui::Ui, palette: &theme::Palette) {
     painter.rect_stroke(
         rect,
         Rounding::same(9.0),
-        Stroke::new(1.0, palette.accent.gamma_multiply(0.8)),
+        Stroke::new(1.0_f32, palette.accent.gamma_multiply(0.8)),
     );
     painter.text(
         rect.center(),
@@ -188,7 +188,7 @@ fn tab_bar(app: &mut HtmApp, ctx: &Context) {
                             Color32::TRANSPARENT
                         })
                         .stroke(if selected {
-                            Stroke::new(1.0, palette.border_strong)
+                            Stroke::new(1.0_f32, palette.border_strong)
                         } else {
                             Stroke::NONE
                         })
@@ -248,7 +248,7 @@ fn activity_bar(app: &mut HtmApp, ctx: &Context) {
         .frame(
             egui::Frame::none()
                 .fill(palette.panel)
-                .stroke(Stroke::new(1.0, palette.border))
+                .stroke(Stroke::new(1.0_f32, palette.border))
                 .inner_margin(egui::Margin::symmetric(SPACE_M, SPACE_S)),
         )
         .show(ctx, |ui| {
@@ -309,7 +309,7 @@ fn toasts(app: &mut HtmApp, ctx: &Context) {
                     egui::Frame::none()
                         .fill(theme::lerp_color(palette.surface, color, 0.14)
                             .gamma_multiply(0.85 + 0.15 * alpha))
-                        .stroke(Stroke::new(1.0, color.gamma_multiply(0.6 * alpha.max(0.3))))
+                        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.6 * alpha.max(0.3))))
                         .rounding(Rounding::same(R_CARD))
                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                         .show(ui, |ui| {

@@ -16,7 +16,7 @@ use crate::theme::{self, Palette, R_CARD, R_CONTROL, R_PILL, SPACE_S, SPACE_XS};
 pub fn card<R>(ui: &mut Ui, palette: &Palette, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::none()
         .fill(palette.surface)
-        .stroke(Stroke::new(1.0, palette.border))
+        .stroke(Stroke::new(1.0_f32, palette.border))
         .rounding(Rounding::same(R_CARD))
         .inner_margin(egui::Margin::same(14.0))
         .show(ui, add)
@@ -32,7 +32,7 @@ pub fn accent_card<R>(
 ) -> R {
     egui::Frame::none()
         .fill(theme::lerp_color(palette.surface, accent, 0.10))
-        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.7)))
+        .stroke(Stroke::new(1.0_f32, accent.gamma_multiply(0.7)))
         .rounding(Rounding::same(R_CARD))
         .inner_margin(egui::Margin::same(14.0))
         .show(ui, add)
@@ -43,7 +43,7 @@ pub fn accent_card<R>(
 pub fn inset<R>(ui: &mut Ui, palette: &Palette, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::none()
         .fill(palette.inset)
-        .stroke(Stroke::new(1.0, palette.border))
+        .stroke(Stroke::new(1.0_f32, palette.border))
         .rounding(Rounding::same(R_CONTROL))
         .inner_margin(egui::Margin::same(9.0))
         .show(ui, add)
@@ -150,7 +150,7 @@ pub fn pill(ui: &mut Ui, palette: &Palette, text: &str, color: Color32) -> Respo
     ui.painter().rect_stroke(
         rect,
         Rounding::same(R_PILL),
-        Stroke::new(1.0, color.gamma_multiply(0.8)),
+        Stroke::new(1.0_f32, color.gamma_multiply(0.8)),
     );
     ui.painter().text(
         rect.center(),
@@ -245,7 +245,7 @@ pub fn bar(
     ui.painter().rect_stroke(
         rect,
         Rounding::same(R_CONTROL),
-        Stroke::new(1.0, palette.border),
+        Stroke::new(1.0_f32, palette.border),
     );
 
     if !text.is_empty() {
@@ -330,12 +330,12 @@ pub fn sparkline(
         ));
     }
     ui.painter()
-        .add(egui::Shape::line(points, Stroke::new(1.6, color)));
+        .add(egui::Shape::line(points, Stroke::new(1.6_f32, color)));
 
     ui.painter().rect_stroke(
         rect,
         Rounding::same(R_CONTROL),
-        Stroke::new(1.0, palette.border),
+        Stroke::new(1.0_f32, palette.border),
     );
     response
 }
@@ -364,7 +364,7 @@ pub fn primary_button(ui: &mut Ui, palette: &Palette, text: &str, enabled: bool)
 pub fn danger_button(ui: &mut Ui, palette: &Palette, text: &str, enabled: bool) -> Response {
     let button = egui::Button::new(RichText::new(text).color(palette.error))
         .fill(theme::lerp_color(palette.surface_raised, palette.error, 0.12))
-        .stroke(Stroke::new(1.0, palette.error.gamma_multiply(0.5)))
+        .stroke(Stroke::new(1.0_f32, palette.error.gamma_multiply(0.5)))
         .rounding(Rounding::same(R_CONTROL));
     ui.add_enabled(enabled, button)
 }
@@ -373,7 +373,7 @@ pub fn danger_button(ui: &mut Ui, palette: &Palette, text: &str, enabled: bool) 
 pub fn ghost_button(ui: &mut Ui, palette: &Palette, text: &str, enabled: bool) -> Response {
     let button = egui::Button::new(RichText::new(text).color(palette.text))
         .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::new(1.0, palette.border))
+        .stroke(Stroke::new(1.0_f32, palette.border))
         .rounding(Rounding::same(R_CONTROL));
     ui.add_enabled(enabled, button)
 }
