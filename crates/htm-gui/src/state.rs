@@ -353,7 +353,6 @@ pub struct SettingsUi {
     pub confirm_master_password: String,
     pub vault_message: Option<String>,
     pub vault_error: Option<String>,
-    pub show_known_hosts: bool,
 }
 
 /// A transient message shown in the corner.

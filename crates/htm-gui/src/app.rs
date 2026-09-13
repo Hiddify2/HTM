@@ -53,7 +53,6 @@ pub enum Action {
     },
 
     InstallProvider,
-    UninstallProvider,
 
     ApplyBenchPreset(String),
     RunBenchmark,
@@ -616,7 +615,6 @@ impl HtmApp {
             },
 
             Action::InstallProvider => self.spawn_install(),
-            Action::UninstallProvider => self.spawn_uninstall(),
 
             Action::ApplyBenchPreset(id) => {
                 if let Some(preset) =

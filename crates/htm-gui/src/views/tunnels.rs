@@ -311,17 +311,23 @@ fn tunnel_card(app: &mut HtmApp, ui: &mut Ui, instance: &TunnelInstance, busy: b
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if widgets::danger_button(ui, &palette, "Remove", !busy).clicked() {
-                    modal = Some(Modal::Confirm {
-                        title: format!("Remove '{}'?", instance.plan.instance),
-                        body: format!(
-                            "This stops the tunnel, deletes its systemd units and its \
-                             configuration from both servers, and forgets it here. The {} \
-                             software itself stays installed.",
-                            app.provider.name()
-                        ),
-                        confirm_label: "Remove it".to_string(),
-                        action: Box::new(ConfirmedAction::RemoveTunnel(instance.id.clone())),
-                    });
+                    // Honour the "ask before stopping or removing" preference
+                    // here too, rather than always asking regardless of it.
+                    if confirm {
+                        modal = Some(Modal::Confirm {
+                            title: format!("Remove '{}'?", instance.plan.instance),
+                            body: format!(
+                                "This stops the tunnel, deletes its systemd units and its \
+                                 configuration from both servers, and forgets it here. The {} \
+                                 software itself stays installed.",
+                                app.provider.name()
+                            ),
+                            confirm_label: "Remove it".to_string(),
+                            action: Box::new(ConfirmedAction::RemoveTunnel(instance.id.clone())),
+                        });
+                    } else {
+                        requested = Some(Action::RemoveTunnel(instance.id.clone()));
+                    }
                 }
             });
         });

@@ -34,7 +34,7 @@ pub struct Palette {
 
     /// Primary accent, used for focus, selection and the main call to action.
     pub accent: Color32,
-    pub accent_hover: Color32,
+    /// Text drawn on top of `accent`.
     pub accent_text: Color32,
 
     pub success: Color32,
@@ -63,7 +63,6 @@ impl Palette {
         text_faint: Color32::from_rgb(0x62, 0x6C, 0x7C),
 
         accent: Color32::from_rgb(0x4C, 0xA6, 0xFF),
-        accent_hover: Color32::from_rgb(0x6E, 0xB9, 0xFF),
         accent_text: Color32::from_rgb(0x08, 0x0C, 0x12),
 
         success: Color32::from_rgb(0x3D, 0xD6, 0x8C),
@@ -97,7 +96,6 @@ impl Palette {
         text_faint: Color32::from_rgb(0x86, 0x91, 0xA2),
 
         accent: Color32::from_rgb(0x14, 0x6E, 0xD6),
-        accent_hover: Color32::from_rgb(0x0F, 0x5C, 0xB8),
         accent_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
 
         success: Color32::from_rgb(0x12, 0x8A, 0x54),
@@ -151,7 +149,6 @@ pub const R_PILL: f32 = 999.0;
 pub const SPACE_XS: f32 = 4.0;
 pub const SPACE_S: f32 = 8.0;
 pub const SPACE_M: f32 = 14.0;
-pub const SPACE_L: f32 = 22.0;
 
 /// Install the palette, type scale and widget styling into the context.
 pub fn apply(ctx: &Context, palette: &Palette) {

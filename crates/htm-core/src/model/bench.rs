@@ -584,16 +584,65 @@ mod tests {
 
     #[test]
     fn best_throughput_and_latency_wins() {
+        let weights = ScoreWeights::default();
         let mut rows = vec![
             completed("fast", 100e6, 100e6, 10.0),
             completed("slow", 10e6, 10e6, 90.0),
         ];
-        score_results(&mut rows, &ScoreWeights::default());
+        score_results(&mut rows, &weights);
         let fast = rows[0].score.unwrap();
         let slow = rows[1].score.unwrap();
+
         assert!(fast > slow, "fast={fast} slow={slow}");
-        assert!((fast - 100.0).abs() < 0.001);
-        assert!(slow.abs() < 0.001);
+        assert!((fast - 100.0).abs() < 0.001, "fast={fast}");
+
+        // The loser does not score zero. These two rows differ only on uplink,
+        // downlink and latency; they *tie* at zero on jitter, loss and startup,
+        // and a dimension where every result is identical gives everyone full
+        // marks, because it tells you nothing about which is better. The loser
+        // therefore keeps exactly the weight of the tied dimensions.
+        let tied = (weights.jitter + weights.loss + weights.handshake) / weights.total();
+        let expected = f64::from(tied) * 100.0;
+        assert!(
+            (slow - expected).abs() < 0.001,
+            "slow={slow}, expected the tied share {expected}"
+        );
+    }
+
+    #[test]
+    fn a_dimension_everyone_ties_on_cannot_separate_them() {
+        // Identical on every measured axis: neither is better at anything, so
+        // both score full marks rather than both scoring nothing.
+        let mut rows = vec![
+            completed("a", 50e6, 50e6, 20.0),
+            completed("b", 50e6, 50e6, 20.0),
+        ];
+        score_results(&mut rows, &ScoreWeights::default());
+        for row in &rows {
+            assert!((row.score.unwrap() - 100.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn weights_decide_how_much_a_dimension_is_worth() {
+        // Same two rows, but scored as if only throughput mattered: the loser
+        // now keeps only the weight of latency, jitter, loss and startup, all
+        // of which it ties on except latency, which it loses.
+        let weights = ScoreWeights {
+            uplink: 1.0,
+            downlink: 1.0,
+            latency: 0.0,
+            jitter: 0.0,
+            loss: 0.0,
+            handshake: 0.0,
+        };
+        let mut rows = vec![
+            completed("fast", 100e6, 100e6, 10.0),
+            completed("slow", 10e6, 10e6, 90.0),
+        ];
+        score_results(&mut rows, &weights);
+        assert!((rows[0].score.unwrap() - 100.0).abs() < 0.001);
+        assert!(rows[1].score.unwrap().abs() < 0.001);
     }
 
     #[test]
