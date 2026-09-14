@@ -268,6 +268,14 @@ pub struct BenchSettings {
     pub udp_target_mbits: u32,
     /// Parallel TCP streams.
     pub parallel_streams: u32,
+    /// Port the throughput tools listen on inside the tunnel.
+    ///
+    /// This port is also written into the relay's `forward_ports`, so the
+    /// measurement runs over a relay configured exactly the way a deployed
+    /// tunnel would be — IP forwarding on, reverse-path filtering off on the
+    /// TUN device, and the DNAT rules in place. Measuring without that would
+    /// be measuring a different machine from the one you are going to run.
+    pub measure_port: u16,
     /// Seconds to wait after the tunnel reports ready before measuring, so
     /// routing and the first handshake settle.
     pub settle_secs: u32,
@@ -292,6 +300,7 @@ impl Default for BenchSettings {
             test_udp: true,
             udp_target_mbits: 50,
             parallel_streams: 4,
+            measure_port: 5301,
             settle_secs: 2,
             handshake_timeout_secs: 45,
             tool: ThroughputTool::PreferIperf3,
@@ -331,6 +340,12 @@ impl BenchSettings {
         }
         if self.parallel_streams == 0 || self.parallel_streams > 64 {
             return Err("Parallel streams must be 1-64.".into());
+        }
+        if self.measure_port < 1024 {
+            return Err(
+                "The measurement port must be 1024 or above, so the tools do not need extra                  privileges to bind it."
+                    .into(),
+            );
         }
         if self.test_udp && (self.udp_target_mbits == 0 || self.udp_target_mbits > 10_000) {
             return Err("UDP target rate must be 1-10000 Mbit/s.".into());

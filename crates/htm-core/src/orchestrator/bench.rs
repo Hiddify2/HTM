@@ -34,7 +34,10 @@ use super::{build_plan, Pair, PlanInputs};
 pub const BENCH_INSTANCE: &str = "htm-benchmark";
 /// Wire port for the measurement tunnel.
 pub const BENCH_DATA_PORT: u16 = 8472;
-/// Port the throughput tools listen on, inside the tunnel.
+/// Default port the throughput tools listen on, inside the tunnel.
+///
+/// [`BenchSettings::measure_port`] is what is actually used; this is only the
+/// value a fresh configuration starts with.
 pub const MEASURE_PORT: u16 = 5301;
 /// UDP datagram size, comfortably under the tunnel MTU so nothing fragments.
 pub const UDP_DATAGRAM: u32 = 1200;
@@ -226,7 +229,7 @@ pub fn run(
 
     reporter.progress(total, total);
     reporter.stage("Cleaning up");
-    cleanup(pair, provider, reporter, cancel);
+    cleanup(pair, provider, ctx.settings.measure_port, reporter, cancel);
 
     score_results(&mut run.results, &ctx.settings.weights);
     run.finished_at = Some(chrono::Utc::now());
@@ -265,9 +268,15 @@ fn bench_plan(
     );
     inputs.data_port = BENCH_DATA_PORT;
     inputs.pre_shared_key = psk.to_string();
-    // No port forwarding during measurement: iptables DNAT rules on the relay
-    // would capture the measurement traffic itself.
-    inputs.forward_ports = Vec::new();
+    // Forward the measurement port, for two reasons.
+    //
+    // The obvious one is that the throughput tools need it. The important one
+    // is that CandyTunnel's `PortForwardGuard::apply` returns early when
+    // `forward_ports` is empty — *before* it enables IP forwarding and clears
+    // reverse-path filtering on the TUN device. Benchmarking with an empty
+    // list would therefore measure a relay configured differently from the one
+    // the user is about to deploy, which is worse than not measuring at all.
+    inputs.forward_ports = vec![ctx.settings.measure_port];
     inputs.mtu = ctx.mtu;
     inputs.tun_mtu = ctx.mtu;
     // `warn` keeps the journal readable while still showing real problems;
@@ -393,6 +402,7 @@ fn measure_once(
         backend,
         &exit_tun,
         &relay_tun,
+        settings.measure_port,
         settings.throughput_secs,
         settings.parallel_streams,
         false,
@@ -409,6 +419,7 @@ fn measure_once(
             backend,
             &exit_tun,
             &relay_tun,
+            settings.measure_port,
             settings.throughput_secs,
             settings.parallel_streams,
             true,
@@ -426,6 +437,7 @@ fn measure_once(
             backend,
             &exit_tun,
             &relay_tun,
+            settings.measure_port,
             settings.throughput_secs,
             settings.udp_target_mbits,
             cancel,
@@ -462,6 +474,7 @@ fn measure_tcp(
     backend: Backend,
     exit_tun: &str,
     relay_tun: &str,
+    port: u16,
     seconds: u32,
     streams: u32,
     reverse: bool,
@@ -470,12 +483,12 @@ fn measure_tcp(
     let relay = pair.client(TunnelSide::Client);
     let exit = pair.client(TunnelSide::Server);
 
-    net::free_port(exit, MEASURE_PORT);
+    net::free_port(exit, port);
     let handle = net::start_server(
         exit,
         backend,
         exit_tun,
-        MEASURE_PORT,
+        port,
         false,
         seconds,
         streams,
@@ -489,7 +502,7 @@ fn measure_tcp(
         relay,
         backend,
         exit_tun,
-        MEASURE_PORT,
+        port,
         seconds,
         streams,
         reverse,
@@ -522,11 +535,13 @@ fn measure_tcp(
 }
 
 /// Run the UDP jitter and loss measurement.
+#[allow(clippy::too_many_arguments)]
 fn measure_udp(
     pair: &Pair,
     backend: Backend,
     exit_tun: &str,
     relay_tun: &str,
+    port: u16,
     seconds: u32,
     mbits: u32,
     cancel: &Arc<AtomicBool>,
@@ -534,12 +549,12 @@ fn measure_udp(
     let relay = pair.client(TunnelSide::Client);
     let exit = pair.client(TunnelSide::Server);
 
-    net::free_port(exit, MEASURE_PORT);
+    net::free_port(exit, port);
     let handle = net::start_server(
         exit,
         backend,
         exit_tun,
-        MEASURE_PORT,
+        port,
         true,
         seconds,
         1,
@@ -551,7 +566,7 @@ fn measure_udp(
         relay,
         backend,
         exit_tun,
-        MEASURE_PORT,
+        port,
         seconds,
         mbits,
         UDP_DATAGRAM,
@@ -590,6 +605,7 @@ fn measure_udp(
 pub fn cleanup(
     pair: &Pair,
     provider: &ProviderRef,
+    measure_port: u16,
     reporter: &dyn Reporter,
     cancel: &Arc<AtomicBool>,
 ) {
@@ -613,7 +629,7 @@ pub fn cleanup(
             pair.client(side),
             &net::ServerHandle {
                 backend: Backend::Iperf3,
-                port: MEASURE_PORT,
+                port: measure_port,
                 result_path: String::new(),
             },
         );
@@ -621,7 +637,7 @@ pub fn cleanup(
             pair.client(side),
             &net::ServerHandle {
                 backend: Backend::Probe,
-                port: MEASURE_PORT,
+                port: measure_port,
                 result_path: String::new(),
             },
         );
@@ -668,8 +684,31 @@ mod tests {
         assert_eq!(plan.data_port, BENCH_DATA_PORT);
         assert_eq!(plan.client.tun_ip, TunSlot::BENCHMARK.client_ip());
         assert_eq!(plan.server.tun_ip, TunSlot::BENCHMARK.server_ip());
-        // Port forwarding would DNAT the measurement traffic itself.
-        assert!(plan.forward_ports.is_empty());
+    }
+
+    #[test]
+    fn the_bench_plan_forwards_the_measurement_port() {
+        // CandyTunnel's PortForwardGuard returns early when forward_ports is
+        // empty, *before* it enables IP forwarding and clears reverse-path
+        // filtering on the TUN device. An empty list would therefore measure a
+        // relay configured differently from the one being deployed.
+        let variant = BenchVariant {
+            id: "v1".into(),
+            label: "udp".into(),
+            description: String::new(),
+            options: OptionMap::new(),
+        };
+        let ctx = context();
+        let plan = bench_plan(&variant, &ctx, "0123456789abcdef0123456789abcdef")
+            .expect("plan");
+        assert_eq!(plan.forward_ports, vec![ctx.settings.measure_port]);
+    }
+
+    #[test]
+    fn a_privileged_measurement_port_is_rejected() {
+        let mut settings = BenchSettings::default();
+        settings.measure_port = 80;
+        assert!(settings.validate().is_err());
     }
 
     #[test]

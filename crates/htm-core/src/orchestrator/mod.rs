@@ -527,7 +527,11 @@ pub fn wait_until_ready(
     let started = Instant::now();
     let target = &plan.server.tun_ip;
 
-    let mut cursor: Option<String> = None;
+    // Journals are followed on both sides, not just the relay: a refused
+    // handshake is usually only explained by the end that refused it.
+    let mut cursors: [Option<String>; 2] = [None, None];
+    let mut baseline_restarts: [Option<u32>; 2] = [None, None];
+    let mut journal_complaint: Option<String> = None;
     let mut last_note = Instant::now();
 
     while started.elapsed() < timeout {
@@ -535,41 +539,72 @@ pub fn wait_until_ready(
             return Err(Error::Cancelled);
         }
 
-        // A unit that has already failed will never become ready.
-        for side in TunnelSide::ORDERED {
+        for (index, side) in TunnelSide::ORDERED.into_iter().enumerate() {
+            let label = pair.label(side);
             let status = systemd::status(pair.client(side), &unit, None)?;
-            if status.is_failed() {
-                let logs = tail_journal(pair.client(side), &unit, 40);
-                return Err(Error::msg(format!(
-                    "{}: the tunnel unit failed to start.\n{}",
-                    pair.label(side),
-                    util::truncate(&logs, 1200)
-                )));
-            }
+
             if !status.exists() {
                 return Err(Error::msg(format!(
-                    "{}: the unit {unit} does not exist. The deployment did not complete.",
-                    pair.label(side)
+                    "{label}: the unit {unit} does not exist. The deployment did not complete."
                 )));
             }
-        }
+            if status.is_failed() {
+                return Err(Error::msg(format!(
+                    "{label}: the tunnel unit failed to start.\n{}",
+                    both_journals(pair, &unit)
+                )));
+            }
 
-        // Look for a fatal message before spending the whole timeout.
-        let chunk = systemd::journal(pair.client(TunnelSide::Client), &unit, 60, cursor.as_deref())
-            .unwrap_or_default();
-        cursor = chunk.cursor.clone();
-        for line in &chunk.lines {
-            for marker in &readiness.fatal_markers {
-                if line.contains(marker.as_str()) {
-                    return Err(Error::msg(format!(
-                        "The relay reported a fatal error: {}",
-                        util::truncate(line.trim(), 400)
-                    )));
+            // A unit that keeps restarting is crashing on startup. systemd
+            // reports it as `activating` between attempts, so without this it
+            // would look healthy until the whole timeout expired.
+            if let Some(restarts) = status.restarts {
+                match baseline_restarts[index] {
+                    None => baseline_restarts[index] = Some(restarts),
+                    Some(first) if restarts >= first.saturating_add(2) => {
+                        return Err(Error::msg(format!(
+                            "{label}: the tunnel restarted {} times in {:.0}s, so it is crashing \
+                             on startup rather than still coming up.\n{}",
+                            restarts - first,
+                            started.elapsed().as_secs_f64(),
+                            both_journals(pair, &unit)
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+
+            // Look for a message that means waiting is pointless.
+            match systemd::journal(pair.client(side), &unit, 80, cursors[index].as_deref()) {
+                Ok(chunk) => {
+                    cursors[index] = chunk.cursor.clone();
+                    for line in &chunk.lines {
+                        for marker in &readiness.fatal_markers {
+                            if line.contains(marker.as_str()) {
+                                return Err(Error::msg(format!(
+                                    "{label} reported a fatal error: {}\n{}",
+                                    util::truncate(line.trim(), 400),
+                                    both_journals(pair, &unit)
+                                )));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Losing the journal is not fatal, but it blinds the checks
+                    // above, so say so once instead of failing silently.
+                    if journal_complaint.is_none() {
+                        let message =
+                            format!("{label}: the journal could not be read ({e}), so HTM cannot \
+                                     explain a failure from the server's own logs.");
+                        reporter.log_line(LogLevel::Warn, None, &message);
+                        journal_complaint = Some(message);
+                    }
                 }
             }
         }
 
-        // The real test.
+        // The authoritative test: does a packet actually cross the link?
         if net::ping_once(pair.client(TunnelSide::Client), target, 2).unwrap_or(false) {
             return Ok(started.elapsed().as_secs_f64());
         }
@@ -589,16 +624,34 @@ pub fn wait_until_ready(
         std::thread::sleep(Duration::from_millis(1200));
     }
 
-    let relay_logs = tail_journal(pair.client(TunnelSide::Client), &unit, 30);
-    let exit_logs = tail_journal(pair.client(TunnelSide::Server), &unit, 30);
-    Err(Error::Timeout {
-        what: format!(
-            "the tunnel to carry traffic.\n--- relay journal ---\n{}\n--- exit journal ---\n{}",
-            util::truncate(&relay_logs, 1000),
-            util::truncate(&exit_logs, 1000)
-        ),
-        seconds: timeout.as_secs(),
-    })
+    Err(Error::msg(format!(
+        "The tunnel did not carry traffic within {}s. Both units are running, but {} never \
+         answered a ping from the relay across the {} link.\n\n\
+         The usual causes, in order of likelihood:\n\
+         \u{2022} the exit server's firewall is dropping inbound {} on port {};\n\
+         \u{2022} the two servers cannot reach each other on that port at all;\n\
+         \u{2022} source-address forging is on and a provider is filtering it.\n{}",
+        timeout.as_secs(),
+        target,
+        plan.tun_name,
+        plan.options
+            .get("uplink_protocol")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| "the tunnel transport".to_string()),
+        plan.data_port,
+        both_journals(pair, &unit),
+    )))
+}
+
+/// The tail of both servers' journals, labelled, for a failure message.
+fn both_journals(pair: &Pair, unit: &str) -> String {
+    format!(
+        "\n--- {} journal ---\n{}\n\n--- {} journal ---\n{}",
+        pair.label(TunnelSide::Client),
+        util::truncate(&tail_journal(pair.client(TunnelSide::Client), unit, 40), 2500),
+        pair.label(TunnelSide::Server),
+        util::truncate(&tail_journal(pair.client(TunnelSide::Server), unit, 40), 2500),
+    )
 }
 
 /// Best-effort journal tail, for error reports.

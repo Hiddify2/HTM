@@ -337,6 +337,14 @@ fn settings_card(app: &mut HtmApp, ui: &mut Ui) {
             "Longer runs give steadier numbers and take proportionally longer. Eight seconds per \
              direction is usually enough to tell configurations apart.",
         );
+        ui.add_space(SPACE_XS);
+        widgets::hint(
+            ui,
+            &palette,
+            "The measurement port is forwarded on the relay for the duration of the run. That is \
+             deliberate: it makes the benchmark configure the relay the same way a real tunnel \
+             does, so the numbers describe the setup you are actually going to deploy.",
+        );
         ui.add_space(SPACE_S);
 
         ui.columns(2, |cols| {
@@ -352,6 +360,19 @@ fn settings_card(app: &mut HtmApp, ui: &mut Ui) {
             changed |= widgets::form_row(ui, &palette, "PARALLEL STREAMS", LABEL_W, |ui| {
                 ui.add(egui::DragValue::new(&mut settings.parallel_streams).range(1..=64))
                     .changed()
+            });
+            changed |= widgets::form_row(ui, &palette, "MEASUREMENT PORT", LABEL_W, |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut settings.measure_port)
+                        .range(1024..=65535)
+                        .speed(1.0),
+                )
+                .on_hover_text(
+                    "The port iperf3 listens on inside the tunnel. HTM also forwards it on the \
+                     relay, so the measurement runs over a relay configured exactly like a \
+                     deployed tunnel.",
+                )
+                .changed()
             });
             changed |= widgets::form_row(ui, &palette, "PING COUNT", LABEL_W, |ui| {
                 ui.add(egui::DragValue::new(&mut settings.ping_count).range(1..=500))
