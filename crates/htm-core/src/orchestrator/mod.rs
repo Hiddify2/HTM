@@ -21,7 +21,7 @@ use crate::model::{
     SpoofPlan, TunSlot, TunnelInstance, TunnelPlan, TunnelSide, TunnelStatus,
 };
 use crate::provider::{HostCtx, InstallMethod, InstalledVersion, ProviderRef};
-use crate::remote::{facts, net, pkg, systemd};
+use crate::remote::{diagnostics, facts, net, pkg, systemd};
 use crate::ssh::{HostKeyPolicy, KnownHosts, SshClient};
 use crate::util;
 
@@ -624,21 +624,32 @@ pub fn wait_until_ready(
         std::thread::sleep(Duration::from_millis(1200));
     }
 
+    // Rather than list the usual suspects, go and find out which one it is.
+    reporter.log_line(
+        LogLevel::Info,
+        None,
+        "The link did not come up; collecting diagnostics from both servers.",
+    );
+    let diagnosis = diagnostics::report(
+        pair.client(TunnelSide::Client),
+        pair.client(TunnelSide::Server),
+        pair.label(TunnelSide::Client),
+        pair.label(TunnelSide::Server),
+        &plan.tun_name,
+        &plan.client.tun_ip,
+        &plan.server.tun_ip,
+        plan.client.peer_target(),
+        plan.server.peer_target(),
+        plan.data_port,
+    );
+
     Err(Error::msg(format!(
         "The tunnel did not carry traffic within {}s. Both units are running, but {} never \
-         answered a ping from the relay across the {} link.\n\n\
-         The usual causes, in order of likelihood:\n\
-         \u{2022} the exit server's firewall is dropping inbound {} on port {};\n\
-         \u{2022} the two servers cannot reach each other on that port at all;\n\
-         \u{2022} source-address forging is on and a provider is filtering it.\n{}",
+         answered a ping from the relay across the {} link.\n{}\n{}",
         timeout.as_secs(),
         target,
         plan.tun_name,
-        plan.options
-            .get("uplink_protocol")
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_else(|| "the tunnel transport".to_string()),
-        plan.data_port,
+        diagnosis,
         both_journals(pair, &unit),
     )))
 }

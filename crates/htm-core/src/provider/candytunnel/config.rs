@@ -93,7 +93,9 @@ pub fn option_space() -> OptionSpace {
     specs.push(OptionSpec {
         key: keys::UPLINK.into(),
         label: "Uplink transport".into(),
-        help: "How packets leave this node. Both sides must agree.".into(),
+        help: "How packets travel from the relay to the exit. HTM configures \
+               the exit to listen for exactly this."
+            .into(),
         group: "Transport".into(),
         kind: OptionKind::Choice {
             choices: protocol_choices.clone(),
@@ -108,8 +110,10 @@ pub fn option_space() -> OptionSpace {
     specs.push(OptionSpec {
         key: keys::DOWNLINK.into(),
         label: "Downlink transport".into(),
-        help: "How packets arrive. Normally the same as the uplink; sweeping \
-               only the uplink keeps the two in step automatically."
+        help: "How packets travel back from the exit to the relay. Normally the \
+               same as the uplink; sweeping only the uplink keeps the two in \
+               step. When they differ, HTM mirrors the pair onto the exit so \
+               that each side listens for what the other sends."
             .into(),
         group: "Transport".into(),
         kind: OptionKind::Choice {
@@ -539,9 +543,10 @@ pub fn normalize(options: &OptionMap) -> OptionMap {
         out.insert(keys::MULTIPLEX_FLUSH_MS.into(), OptValue::Int(1));
     }
 
-    // Port shuffling needs a real port, and CandyTunnel rejects it outright
-    // alongside QUIC.
-    if !supports_port_shuffle(&uplink) || uplink == "quic" {
+    // Port shuffling needs a real L4 port. Because the pair is mirrored between
+    // the two sides, a transport with no ports in *either* direction makes the
+    // setting meaningless for the pair as a whole.
+    if !supports_port_shuffle(&uplink) || !supports_port_shuffle(&downlink) || uplink == "quic" {
         out.insert(keys::SHUFFLE_PORT.into(), OptValue::Bool(false));
     }
 
@@ -858,15 +863,25 @@ pub fn render_toml(plan: &TunnelPlan, side: TunnelSide) -> String {
     // address implicitly. This list adds the rest of the peer's rotation pool.
     s.push_str(&format!("allowed_peers = {allowed_peers}\n\n"));
 
+    // A node *sends* with `uplink_protocol` and *listens* with
+    // `downlink_protocol`: `tunnel.rs` picks the outgoing transport from the
+    // uplink, while `app.rs` spawns the receiver from the downlink. For the two
+    // ends to meet, each side's uplink has to be the other side's downlink, so
+    // the pair is mirrored onto the exit rather than copied to it.
+    //
+    // The plan states the pair from the relay's point of view: `uplink` means
+    // relay to exit. When both name the same transport — which is every variant
+    // the default benchmark matrix produces — mirroring is a no-op.
+    let plan_uplink = options.str_or(keys::UPLINK, "udp");
+    let plan_downlink = options.str_or(keys::DOWNLINK, "udp");
+    let (uplink, downlink) = match side {
+        TunnelSide::Client => (plan_uplink.as_str(), plan_downlink.as_str()),
+        TunnelSide::Server => (plan_downlink.as_str(), plan_uplink.as_str()),
+    };
+
     s.push_str("# ── Transport ─────────────────────────────────────────────────\n");
-    s.push_str(&format!(
-        "uplink_protocol   = {}\n",
-        toml_string(&options.str_or(keys::UPLINK, "udp"))
-    ));
-    s.push_str(&format!(
-        "downlink_protocol = {}\n",
-        toml_string(&options.str_or(keys::DOWNLINK, "udp"))
-    ));
+    s.push_str(&format!("uplink_protocol   = {}\n", toml_string(uplink)));
+    s.push_str(&format!("downlink_protocol = {}\n", toml_string(downlink)));
     s.push_str(&format!("data_port         = {}\n", plan.data_port));
     s.push_str(&format!(
         "shuffle_data_port = {}\n",
@@ -1214,6 +1229,45 @@ mod tests {
         assert!(label.starts_with("udp"));
         assert!(label.contains("mux"));
         assert!(label.contains("xor"));
+    }
+
+    #[test]
+    fn an_asymmetric_transport_pair_is_mirrored_on_the_exit() {
+        // CandyTunnel sends with `uplink_protocol` and listens with
+        // `downlink_protocol`, so each side's uplink has to be the other's
+        // downlink. Copying the pair verbatim would leave the relay shouting
+        // over ICMP at an exit listening for UDP.
+        let mut p = plan();
+        p.options
+            .insert(keys::UPLINK.into(), OptValue::Choice("icmp".into()));
+        p.options
+            .insert(keys::DOWNLINK.into(), OptValue::Choice("udp".into()));
+
+        let client = render_toml(&p, TunnelSide::Client);
+        let server = render_toml(&p, TunnelSide::Server);
+
+        assert!(client.contains("uplink_protocol   = \"icmp\""));
+        assert!(client.contains("downlink_protocol = \"udp\""));
+        // Mirrored, not copied.
+        assert!(server.contains("uplink_protocol   = \"udp\""));
+        assert!(server.contains("downlink_protocol = \"icmp\""));
+    }
+
+    #[test]
+    fn a_symmetric_transport_pair_is_unchanged_by_mirroring() {
+        // Every variant the default matrix produces is symmetric, so mirroring
+        // has to be a no-op for them.
+        let mut p = plan();
+        p.options
+            .insert(keys::UPLINK.into(), OptValue::Choice("gre".into()));
+        p.options
+            .insert(keys::DOWNLINK.into(), OptValue::Choice("gre".into()));
+
+        for side in [TunnelSide::Client, TunnelSide::Server] {
+            let rendered = render_toml(&p, side);
+            assert!(rendered.contains("uplink_protocol   = \"gre\""));
+            assert!(rendered.contains("downlink_protocol = \"gre\""));
+        }
     }
 
     #[test]
