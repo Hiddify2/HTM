@@ -381,9 +381,13 @@ impl TunSlot {
     pub const NETMASK: &'static str = "255.255.255.252";
 
     /// Slot reserved for benchmark runs so it can never collide with a tunnel
-    /// the user deployed. Taken from the top of the range so that the first
-    /// tunnel someone creates gets the known-good `10.54.21.x`.
-    pub const BENCHMARK: TunSlot = TunSlot(200);
+    /// the user deployed.
+    ///
+    /// This is slot 0 — `10.54.21.x` — on purpose. The benchmark is the first
+    /// thing that runs and the thing that has to work before anything else is
+    /// worth doing, so it gets the addresses confirmed to work in practice.
+    /// User tunnels count up from slot 1.
+    pub const BENCHMARK: TunSlot = TunSlot(0);
     /// Highest usable slot: `10.254.21.x`.
     pub const MAX: u16 = 200;
 
@@ -663,8 +667,9 @@ mod tests {
     }
 
     #[test]
-    fn the_first_tunnel_gets_the_known_good_addresses() {
-        // This exact pair is the one confirmed to work in practice.
+    fn slot_zero_is_the_known_good_pair() {
+        // This exact pair is the one confirmed to work in practice, which is
+        // why the benchmark claims it.
         assert_eq!(TunSlot(0).server_ip(), "10.54.21.1");
         assert_eq!(TunSlot(0).client_ip(), "10.54.21.2");
         assert_eq!(TunSlot(0).network(), "10.54.21.0/30");
@@ -701,8 +706,8 @@ mod tests {
 
     #[test]
     fn first_free_skips_used_and_benchmark() {
-        let used = vec![TunSlot(0), TunSlot(1)];
-        assert_eq!(TunSlot::first_free(&used), TunSlot(2));
+        let used = vec![TunSlot(1), TunSlot(2)];
+        assert_eq!(TunSlot::first_free(&used), TunSlot(3));
 
         // The benchmark slot is never handed to a user tunnel.
         let all: Vec<TunSlot> = (0..TunSlot::BENCHMARK.0).map(TunSlot).collect();
@@ -710,8 +715,10 @@ mod tests {
     }
 
     #[test]
-    fn the_benchmark_sits_at_the_top_of_the_range() {
-        assert_eq!(TunSlot::BENCHMARK.server_ip(), "10.254.21.1");
-        assert_eq!(TunSlot::BENCHMARK.client_ip(), "10.254.21.2");
+    fn the_benchmark_gets_the_known_good_addresses() {
+        // The benchmark gets the known-good pair; user tunnels start above it.
+        assert_eq!(TunSlot::BENCHMARK.server_ip(), "10.54.21.1");
+        assert_eq!(TunSlot::BENCHMARK.client_ip(), "10.54.21.2");
+        assert_eq!(TunSlot::first_free(&[]), TunSlot(1));
     }
 }

@@ -644,6 +644,11 @@ pub fn wait_until_ready(
         plan.client.peer_target(),
         plan.server.peer_target(),
         plan.data_port,
+        &plan
+            .options
+            .get("uplink_protocol")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| "udp".to_string()),
     );
 
     Err(Error::msg(format!(
