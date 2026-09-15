@@ -283,7 +283,7 @@ mod tests {
                 iface: "eth0".into(),
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
-                tun_ip: "10.77.0.2".into(),
+                tun_ip: "10.54.21.2".into(),
                 spoofed_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
@@ -291,7 +291,7 @@ mod tests {
                 iface: "ens3".into(),
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
-                tun_ip: "10.77.0.1".into(),
+                tun_ip: "10.54.21.1".into(),
                 spoofed_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),

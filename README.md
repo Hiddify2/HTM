@@ -4,8 +4,8 @@
 
 **Build, measure and run a tunnel between two servers, without touching a terminal.**
 
-[![Build and Release](https://github.com/Hiddify2/HiddifyTunnelManager/actions/workflows/release.yml/badge.svg)](https://github.com/Hiddify2/HiddifyTunnelManager/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/Hiddify2/HiddifyTunnelManager?include_prereleases&sort=semver)](https://github.com/Hiddify2/HiddifyTunnelManager/releases/latest)
+[![Build and Release](https://github.com/Hiddify2/HTM/actions/workflows/release.yml/badge.svg)](https://github.com/Hiddify2/HTM/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/Hiddify2/HTM?include_prereleases&sort=semver)](https://github.com/Hiddify2/HTM/releases/latest)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.76%2B-orange.svg)](https://www.rust-lang.org/)
 
@@ -43,7 +43,7 @@ route actually allows — you measure it.
 
 ## Download
 
-Grab a binary from the [releases page](https://github.com/Hiddify2/HiddifyTunnelManager/releases/latest).
+Grab a binary from the [releases page](https://github.com/Hiddify2/HTM/releases/latest).
 
 | File | Platform |
 |------|----------|
@@ -221,7 +221,7 @@ builds from source instead, which needs roughly 1 GiB of RAM and 2 GiB of disk.
 You need Rust 1.76 or newer.
 
 ```sh
-git clone https://github.com/Hiddify2/HiddifyTunnelManager
+git clone https://github.com/Hiddify2/HTM
 cd HiddifyTunnelManager
 cargo build --release
 ```

@@ -376,10 +376,13 @@ pub fn build_plan(inputs: &PlanInputs) -> Result<TunnelPlan> {
     Ok(plan)
 }
 
-/// The TUN interface name for a slot. Linux caps interface names at 15
-/// characters, and these stay well inside that.
+/// The TUN interface name for a slot.
+///
+/// Named after the second octet of its addresses, so `candy54` is visibly the
+/// interface holding `10.54.21.x` when reading `ip addr` on the server. Linux
+/// caps interface names at 15 characters; these are at most 8.
 pub fn tun_name_for(slot: TunSlot) -> String {
-    format!("candy{}", slot.0)
+    format!("candy{}", slot.second_octet())
 }
 
 /// Deploy a plan to both hosts and start it.
@@ -866,9 +869,10 @@ mod tests {
         );
         let plan = build_plan(&inputs).expect("plan");
         assert_eq!(plan.instance, "my-tunnel");
-        assert_eq!(plan.client.tun_ip, TunSlot(3).client_ip());
-        assert_eq!(plan.server.tun_ip, TunSlot(3).server_ip());
-        assert_eq!(plan.tun_name, "candy3");
+        assert_eq!(plan.client.tun_ip, "10.57.21.2");
+        assert_eq!(plan.server.tun_ip, "10.57.21.1");
+        // The interface is named after the octet that identifies the tunnel.
+        assert_eq!(plan.tun_name, "candy57");
         // Spoofing is off by default, so each side uses its own address.
         assert_eq!(plan.client.spoofed_ip, "192.0.2.10");
         assert_eq!(plan.server.spoofed_ip, "198.51.100.5");

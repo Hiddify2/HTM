@@ -357,33 +357,59 @@ pub fn is_ipv4(s: &str) -> bool {
     true
 }
 
-/// Point-to-point addressing for one tunnel, carved out of a private /16.
+/// Point-to-point addressing for one tunnel.
 ///
-/// Slot `n` yields the /30 at `10.77.<n / 64>.<(n % 64) * 4>`, giving the exit
-/// `.1` and the relay `.2`. 16384 slots is far more than anyone will use, and
-/// keeping tunnels in disjoint /30s means several can run side by side.
+/// Slot `n` yields `10.<54 + n>.21.1` for the exit and `10.<54 + n>.21.2` for
+/// the relay, on a /30.
+///
+/// The hosts are always `.1` and `.2` of a `.0` network, and tunnels are told
+/// apart by the **second** octet rather than by moving along within a subnet.
+/// That is deliberate: addressing that only varied the low octets was found not
+/// to work reliably in practice, while this layout does, and it matches the
+/// shape of CandyTunnel's own example configuration. Counting up the second
+/// octet gives 200 usable tunnels, which is far more than anyone will run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TunSlot(pub u16);
 
 impl TunSlot {
+    /// First octet of every tunnel address.
     pub const BASE_A: u8 = 10;
-    pub const BASE_B: u8 = 77;
+    /// Second octet of slot 0. Later slots count up from here.
+    pub const BASE_B: u8 = 54;
+    /// Third octet, the same for every slot.
+    pub const BASE_C: u8 = 21;
     pub const NETMASK: &'static str = "255.255.255.252";
+
     /// Slot reserved for benchmark runs so it can never collide with a tunnel
-    /// the user deployed.
-    pub const BENCHMARK: TunSlot = TunSlot(4095);
-    pub const MAX: u16 = 16_383;
+    /// the user deployed. Taken from the top of the range so that the first
+    /// tunnel someone creates gets the known-good `10.54.21.x`.
+    pub const BENCHMARK: TunSlot = TunSlot(200);
+    /// Highest usable slot: `10.254.21.x`.
+    pub const MAX: u16 = 200;
+
+    /// The second octet, which is what distinguishes one tunnel from another.
+    pub fn second_octet(self) -> u8 {
+        Self::BASE_B.saturating_add((self.0 % (Self::MAX + 1)) as u8)
+    }
 
     /// `.1` — the exit side.
     pub fn server_ip(self) -> String {
-        let (c, d) = self.octets();
-        format!("{}.{}.{}.{}", Self::BASE_A, Self::BASE_B, c, d + 1)
+        format!(
+            "{}.{}.{}.1",
+            Self::BASE_A,
+            self.second_octet(),
+            Self::BASE_C
+        )
     }
 
     /// `.2` — the relay side.
     pub fn client_ip(self) -> String {
-        let (c, d) = self.octets();
-        format!("{}.{}.{}.{}", Self::BASE_A, Self::BASE_B, c, d + 2)
+        format!(
+            "{}.{}.{}.2",
+            Self::BASE_A,
+            self.second_octet(),
+            Self::BASE_C
+        )
     }
 
     /// The address of one side.
@@ -396,15 +422,12 @@ impl TunSlot {
 
     /// The network address, for display.
     pub fn network(self) -> String {
-        let (c, d) = self.octets();
-        format!("{}.{}.{}.{}/30", Self::BASE_A, Self::BASE_B, c, d)
-    }
-
-    fn octets(self) -> (u8, u8) {
-        let n = (self.0 % (Self::MAX + 1)) as u32;
-        let c = (n / 64) as u8;
-        let d = ((n % 64) * 4) as u8;
-        (c, d)
+        format!(
+            "{}.{}.{}.0/30",
+            Self::BASE_A,
+            self.second_octet(),
+            Self::BASE_C
+        )
     }
 
     /// The lowest slot not present in `used`.
@@ -640,20 +663,55 @@ mod tests {
     }
 
     #[test]
-    fn tun_slots_are_disjoint() {
-        assert_eq!(TunSlot(0).server_ip(), "10.77.0.1");
-        assert_eq!(TunSlot(0).client_ip(), "10.77.0.2");
-        assert_eq!(TunSlot(1).server_ip(), "10.77.0.5");
-        assert_eq!(TunSlot(63).client_ip(), "10.77.0.254");
-        assert_eq!(TunSlot(64).server_ip(), "10.77.1.1");
-        assert_eq!(TunSlot(0).network(), "10.77.0.0/30");
+    fn the_first_tunnel_gets_the_known_good_addresses() {
+        // This exact pair is the one confirmed to work in practice.
+        assert_eq!(TunSlot(0).server_ip(), "10.54.21.1");
+        assert_eq!(TunSlot(0).client_ip(), "10.54.21.2");
+        assert_eq!(TunSlot(0).network(), "10.54.21.0/30");
+    }
+
+    #[test]
+    fn further_tunnels_count_up_the_second_octet() {
+        assert_eq!(TunSlot(1).server_ip(), "10.55.21.1");
+        assert_eq!(TunSlot(1).client_ip(), "10.55.21.2");
+        assert_eq!(TunSlot(2).server_ip(), "10.56.21.1");
+    }
+
+    #[test]
+    fn every_slot_puts_the_hosts_at_dot_one_and_dot_two() {
+        // The low octets never move: that is the whole point of the layout.
+        for n in 0..=TunSlot::MAX {
+            let slot = TunSlot(n);
+            assert!(slot.server_ip().ends_with(".21.1"), "{}", slot.server_ip());
+            assert!(slot.client_ip().ends_with(".21.2"), "{}", slot.client_ip());
+            assert!(is_ipv4(&slot.server_ip()));
+            assert!(is_ipv4(&slot.client_ip()));
+        }
+    }
+
+    #[test]
+    fn slots_never_collide() {
+        let mut seen: Vec<String> = Vec::new();
+        for n in 0..=TunSlot::MAX {
+            let ip = TunSlot(n).server_ip();
+            assert!(!seen.contains(&ip), "{ip} was handed out twice");
+            seen.push(ip);
+        }
     }
 
     #[test]
     fn first_free_skips_used_and_benchmark() {
         let used = vec![TunSlot(0), TunSlot(1)];
         assert_eq!(TunSlot::first_free(&used), TunSlot(2));
-        let all: Vec<TunSlot> = (0..4095).map(TunSlot).collect();
-        assert_eq!(TunSlot::first_free(&all), TunSlot(4096));
+
+        // The benchmark slot is never handed to a user tunnel.
+        let all: Vec<TunSlot> = (0..TunSlot::BENCHMARK.0).map(TunSlot).collect();
+        assert_ne!(TunSlot::first_free(&all), TunSlot::BENCHMARK);
+    }
+
+    #[test]
+    fn the_benchmark_sits_at_the_top_of_the_range() {
+        assert_eq!(TunSlot::BENCHMARK.server_ip(), "10.254.21.1");
+        assert_eq!(TunSlot::BENCHMARK.client_ip(), "10.254.21.2");
     }
 }

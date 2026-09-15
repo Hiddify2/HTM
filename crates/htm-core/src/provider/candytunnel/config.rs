@@ -895,8 +895,13 @@ pub fn render_toml(plan: &TunnelPlan, side: TunnelSide) -> String {
         "shuffle_port_max  = {}\n",
         options.int_or(keys::SHUFFLE_MAX, 65_535)
     ));
+    // Written in hex, the way CandyTunnel's own example configuration and its
+    // documentation express it. TOML parses `0x4321` and `17185` to the same
+    // integer, so this is for the reader rather than the parser: an identifier
+    // that has to match on both sides is much easier to compare by eye in the
+    // form it is usually quoted in.
     s.push_str(&format!(
-        "icmp_id        = {}\n",
+        "icmp_id        = 0x{:04X}\n",
         options.int_or(keys::ICMP_ID, 0x4321)
     ));
     s.push_str(&format!(
@@ -1108,7 +1113,7 @@ mod tests {
                 iface: "eth0".into(),
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
-                tun_ip: "10.77.0.2".into(),
+                tun_ip: "10.54.21.2".into(),
                 spoofed_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
@@ -1116,7 +1121,7 @@ mod tests {
                 iface: "ens3".into(),
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
-                tun_ip: "10.77.0.1".into(),
+                tun_ip: "10.54.21.1".into(),
                 spoofed_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),
@@ -1145,14 +1150,23 @@ mod tests {
     }
 
     #[test]
+    fn the_icmp_identifier_is_written_in_hex() {
+        // Same integer either way as far as TOML is concerned, but this is the
+        // form CandyTunnel's documentation and examples use, and it has to be
+        // compared by eye between the two servers.
+        let rendered = render_toml(&plan(), TunnelSide::Client);
+        assert!(rendered.contains("icmp_id        = 0x4321"), "{rendered}");
+    }
+
+    #[test]
     fn tun_addresses_are_swapped_between_sides() {
         let p = plan();
         let client = render_toml(&p, TunnelSide::Client);
         let server = render_toml(&p, TunnelSide::Server);
-        assert!(client.contains("tun_ip      = \"10.77.0.2\""));
-        assert!(client.contains("tun_peer_ip = \"10.77.0.1\""));
-        assert!(server.contains("tun_ip      = \"10.77.0.1\""));
-        assert!(server.contains("tun_peer_ip = \"10.77.0.2\""));
+        assert!(client.contains("tun_ip      = \"10.54.21.2\""));
+        assert!(client.contains("tun_peer_ip = \"10.54.21.1\""));
+        assert!(server.contains("tun_ip      = \"10.54.21.1\""));
+        assert!(server.contains("tun_peer_ip = \"10.54.21.2\""));
     }
 
     #[test]
