@@ -356,12 +356,21 @@ pub fn option_space() -> OptionSpace {
     specs.push(OptionSpec {
         key: keys::AUTO_TUNE.into(),
         label: "Auto-tune".into(),
-        help: "Let CandyTunnel size its queues and worker threads from the \
-               detected CPU, memory and NIC."
+        help: "Let CandyTunnel size its own queues and worker threads from the \
+               detected CPU, memory and NIC. It also OVERWRITES multiplexing, \
+               the flush delay and the parallel tunnel count, so turning it on \
+               discards those settings and decides them from the performance \
+               profile instead. Off by default for that reason."
             .into(),
         group: "Performance".into(),
         kind: OptionKind::Toggle,
-        default: OptValue::Bool(true),
+        // Deliberately false. `apply_auto_tune` assigns over `enable_multiplex`,
+        // `multiplex_flush_ms`, `tunnel_count`, `channel_capacity` and
+        // `io_channel_capacity` before the tunnel starts. With it on, a
+        // benchmark sweeping multiplexing or parallelism measures the same
+        // effective configuration every time, and a deployed tunnel silently
+        // ignores what the user chose.
+        default: OptValue::Bool(false),
         benchmarkable: false,
         bench_values: Vec::new(),
     });
@@ -1069,7 +1078,10 @@ pub fn unit_template() -> String {
          StandardError=journal\n\
          SyslogIdentifier={prefix}-%i\n\
          AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN\n\
-         CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN\n\
+         # No CapabilityBoundingSet: the unit already runs as root, so bounding\n\
+         # the set buys no isolation, and restricting it is the one meaningful\n\
+         # difference between this and running the binary by hand as root —\n\
+         # which is the configuration known to bring the TUN device up fully.\n\
          NoNewPrivileges=false\n\
          LimitNOFILE=65536\n\
          LimitMEMLOCK=infinity\n\
@@ -1377,7 +1389,21 @@ mod tests {
         let unit = unit_template();
         assert!(unit.contains("/opt/candytunnel/candy-tunnel --config"));
         assert!(!unit.contains("/opt/candytunnel/server"));
-        assert!(unit.contains("CAP_NET_RAW"));
+        assert!(unit.contains("AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN"));
+        assert!(unit.contains("User=root"));
+        // Bounding the capability set of a root unit buys nothing and is the
+        // one thing that differs from running the binary by hand.
+        assert!(!unit.contains("CapabilityBoundingSet="));
+    }
+
+    #[test]
+    fn auto_tune_is_off_so_the_chosen_settings_survive() {
+        // CandyTunnel's `apply_auto_tune` assigns over enable_multiplex,
+        // multiplex_flush_ms and tunnel_count. Defaulting it on would make the
+        // benchmark compare configurations that are secretly identical.
+        let defaults = option_space().defaults();
+        assert_eq!(defaults.bool_or(keys::AUTO_TUNE, true), false);
+        assert!(render_toml(&plan(), TunnelSide::Client).contains("auto_tune              = false"));
     }
 
     #[test]

@@ -284,6 +284,14 @@ fn bench_plan(
     inputs.log_level = "warn".to_string();
     inputs.spoofing = SpoofPlan::default();
 
+    // Auto-tune assigns over `enable_multiplex`, `multiplex_flush_ms` and
+    // `tunnel_count` inside CandyTunnel before the tunnel starts. Those are
+    // dimensions the matrix sweeps, so leaving it on would have every variant
+    // run the same effective configuration and the results would be fiction.
+    inputs
+        .options
+        .insert("auto_tune".to_string(), crate::model::OptValue::Bool(false));
+
     build_plan(&inputs)
 }
 

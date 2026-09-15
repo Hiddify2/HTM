@@ -536,6 +536,9 @@ pub fn wait_until_ready(
     let mut baseline_restarts: [Option<u32>; 2] = [None, None];
     let mut journal_complaint: Option<String> = None;
     let mut last_note = Instant::now();
+    // The interface only exists once the process has started, so give it a
+    // moment before checking, and only check the once.
+    let mut addresses_checked = false;
 
     while started.elapsed() < timeout {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -607,6 +610,22 @@ pub fn wait_until_ready(
             }
         }
 
+        // Once both devices have had time to appear, make sure they actually
+        // carry their addresses. A bare TUN routes nothing, and every later
+        // check would just time out without saying why.
+        if !addresses_checked && started.elapsed() >= Duration::from_secs(4) {
+            addresses_checked = true;
+            for side in TunnelSide::ORDERED {
+                if let Err(e) = ensure_tun_addressed(pair, plan, side, reporter) {
+                    reporter.log_line(
+                        LogLevel::Debug,
+                        Some(pair.label(side)),
+                        &format!("Could not verify the TUN address: {e}"),
+                    );
+                }
+            }
+        }
+
         // The authoritative test: does a packet actually cross the link?
         if net::ping_once(pair.client(TunnelSide::Client), target, 2).unwrap_or(false) {
             return Ok(started.elapsed().as_secs_f64());
@@ -660,6 +679,103 @@ pub fn wait_until_ready(
         diagnosis,
         both_journals(pair, &unit),
     )))
+}
+
+/// Check that a side's TUN device really carries the address the plan gave it,
+/// and put it right if not.
+///
+/// CandyTunnel configures the interface with `SIOCSIFADDR`/`SIOCSIFMTU` ioctls
+/// when it starts. Those have been observed to leave the device up but bare —
+/// no IPv4 address and the default 1500 MTU — in which case nothing routes into
+/// the tunnel and the only symptom is silence. Rather than let that present as
+/// an unexplained timeout, verify it and apply the same configuration with
+/// `ip`, which is what fixing it by hand would amount to.
+///
+/// Returns `Ok(true)` when a repair was needed and made.
+pub fn ensure_tun_addressed(
+    pair: &Pair,
+    plan: &TunnelPlan,
+    side: TunnelSide,
+    reporter: &dyn Reporter,
+) -> Result<bool> {
+    let endpoint = plan.endpoint(side);
+    let peer = plan.endpoint(side.peer());
+    let tun_mtu = plan.tun_mtu.min(plan.mtu);
+
+    let script = format!(
+        r#"#!/bin/sh
+TUN={tun}
+WANT={want}
+PEER={peer}
+MTU={mtu}
+
+if [ ! -d "/sys/class/net/$TUN" ]; then
+  echo "state=missing"
+  exit 0
+fi
+
+HAVE=$(ip -4 -o addr show dev "$TUN" 2>/dev/null | tr -s ' ' | cut -d' ' -f4 | cut -d/ -f1)
+if [ "$HAVE" = "$WANT" ]; then
+  echo "state=ok"
+  exit 0
+fi
+
+echo "state=repaired"
+echo "had=$HAVE"
+ip addr flush dev "$TUN" 2>/dev/null
+ip addr add "$WANT" peer "$PEER" dev "$TUN" 2>&1
+ip link set dev "$TUN" mtu "$MTU" up 2>&1
+echo "now=$(ip -4 -o addr show dev "$TUN" 2>/dev/null | tr -s ' ' | cut -d' ' -f4 | cut -d/ -f1)"
+exit 0
+"#,
+        tun = util::sh_quote(&plan.tun_name),
+        want = util::sh_quote(&endpoint.tun_ip),
+        peer = util::sh_quote(&peer.tun_ip),
+        mtu = tun_mtu,
+    );
+
+    let out = pair.client(side).run_script(&script, true)?;
+    let label = pair.label(side);
+    let field = |key: &str| -> String {
+        out.stdout
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(key))
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+
+    match field("state=").as_str() {
+        "ok" => Ok(false),
+        "missing" => Ok(false),
+        "repaired" => {
+            let had = field("had=");
+            let now = field("now=");
+            reporter.log_line(
+                LogLevel::Warn,
+                Some(label),
+                &format!(
+                    "{} came up without its address ({}); set it to {} peer {} mtu {}{}.",
+                    plan.tun_name,
+                    if had.is_empty() {
+                        "none assigned".to_string()
+                    } else {
+                        had
+                    },
+                    endpoint.tun_ip,
+                    peer.tun_ip,
+                    tun_mtu,
+                    if now == endpoint.tun_ip {
+                        ""
+                    } else {
+                        " — and it still did not take"
+                    },
+                ),
+            );
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// The tail of both servers' journals, labelled, for a failure message.
