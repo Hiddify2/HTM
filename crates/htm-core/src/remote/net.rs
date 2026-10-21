@@ -127,9 +127,7 @@ pub fn parse_ping(text: &str) -> PingSample {
 
         // "rtt min/avg/max/mdev = 0.234/0.312/0.456/0.045 ms"
         // busybox: "round-trip min/avg/max = 0.234/0.312/0.456 ms"
-        if (line.starts_with("rtt ") || line.starts_with("round-trip "))
-            && line.contains('=')
-        {
+        if (line.starts_with("rtt ") || line.starts_with("round-trip ")) && line.contains('=') {
             if let Some((_, values)) = line.split_once('=') {
                 let values = values.trim().trim_end_matches(" ms").trim();
                 let nums: Vec<f64> = values
@@ -171,6 +169,46 @@ pub fn ping_once(client: &SshClient, target: &str, timeout_secs: u32) -> Result<
     };
     client.reset_command_timeout();
     Ok(out?.first_line() == "up")
+}
+
+/// Is a local socket listening on `port` on this host?
+///
+/// Used as the readiness test for tunnels that have no TUN link to ping — a
+/// relay's SOCKS5 listener or a forwarded port. `tcp` selects TCP vs UDP;
+/// `ss` is preferred, with a `/proc/net` fallback so a host without `ss`
+/// installed is still testable. A bound UDP socket shows as listening here
+/// even though it answers nothing on its own, which is exactly the signal a
+/// UDP forwarder gives.
+pub fn port_listening(client: &SshClient, port: u16, tcp: bool) -> Result<bool> {
+    // /proc/net/{tcp,udp} list the local address:port in hex; the port is the
+    // field after the first colon of column 2. A listening TCP socket is in
+    // state 0A; UDP sockets have no listen state, so presence is enough.
+    let proto = if tcp { "tcp" } else { "udp" };
+    let ss_state = if tcp { "-ltn" } else { "-lun" };
+    let hexport = format!("{port:04X}");
+    let script = format!(
+        r#"#!/bin/sh
+PORT={port}
+if command -v ss >/dev/null 2>&1; then
+  if ss {ss_state} 2>/dev/null | grep -qE "[:.]${{PORT}}([^0-9]|$)"; then
+    echo yes; exit 0
+  fi
+fi
+# Fallback: the local port is the hex after the colon in column 2 of /proc/net.
+if awk 'NR>1 {{ split($2, a, ":"); if (a[2] == "{hexport}") found=1 }} END {{ exit (found?0:1) }}' \
+     /proc/net/{proto} /proc/net/{proto}6 2>/dev/null; then
+  echo yes; exit 0
+fi
+echo no
+exit 0
+"#,
+        port = port,
+        ss_state = ss_state,
+        hexport = hexport,
+        proto = proto,
+    );
+    let out = client.run_script(&script, client.priv_mode().can_escalate())?;
+    Ok(out.first_line().trim() == "yes")
 }
 
 // ── Throughput ───────────────────────────────────────────────────────────────
@@ -288,7 +326,10 @@ pub fn start_server(
 
     // setsid detaches from the session so closing the SSH channel does not
     // deliver SIGHUP to the listener.
-    let launch = format!("setsid nohup sh -c {} >/dev/null 2>&1 &", sh_quote(&command));
+    let launch = format!(
+        "setsid nohup sh -c {} >/dev/null 2>&1 &",
+        sh_quote(&command)
+    );
     client.exec_priv(&launch)?;
 
     Ok(ServerHandle {
@@ -493,7 +534,10 @@ fn describe_failure(status: i32, output: &str) -> String {
     if trimmed.is_empty() {
         format!("the command exited with status {status} and produced no output")
     } else {
-        format!("exit status {status}: {}", crate::util::truncate(&trimmed, 500))
+        format!(
+            "exit status {status}: {}",
+            crate::util::truncate(&trimmed, 500)
+        )
     }
 }
 
@@ -604,10 +648,7 @@ pub fn parse_probe(text: &str) -> Option<ThroughputSample> {
         seconds: v.get("seconds").and_then(Value::as_f64).unwrap_or(0.0),
         retransmits: 0,
         jitter_ms: v.get("jitter_ms").and_then(Value::as_f64).unwrap_or(0.0),
-        lost_percent: v
-            .get("lost_percent")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0),
+        lost_percent: v.get("lost_percent").and_then(Value::as_f64).unwrap_or(0.0),
         tool: "probe".to_string(),
     })
 }

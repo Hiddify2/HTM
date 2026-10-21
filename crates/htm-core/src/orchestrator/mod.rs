@@ -20,7 +20,7 @@ use crate::model::{
     OptionMap, ServerCredentials, ServerFacts, ServerProfile, ServiceAction, ServiceStatus,
     SpoofPlan, TunSlot, TunnelInstance, TunnelPlan, TunnelSide, TunnelStatus,
 };
-use crate::provider::{HostCtx, InstallMethod, InstalledVersion, ProviderRef};
+use crate::provider::{HostCtx, InstallMethod, InstalledVersion, ProviderRef, ReadinessProbe};
 use crate::remote::{diagnostics, facts, net, pkg, systemd};
 use crate::ssh::{HostKeyPolicy, KnownHosts, SshClient};
 use crate::util;
@@ -141,11 +141,9 @@ pub fn connect_pair(
     policy: &HostKeyPolicy,
     reporter: &dyn Reporter,
 ) -> Result<Pair> {
-    let (exit_client, exit_facts) =
-        connect_one(exit, known_hosts_path, policy, reporter, true)?;
+    let (exit_client, exit_facts) = connect_one(exit, known_hosts_path, policy, reporter, true)?;
     reporter.check()?;
-    let (relay_client, relay_facts) =
-        connect_one(relay, known_hosts_path, policy, reporter, true)?;
+    let (relay_client, relay_facts) = connect_one(relay, known_hosts_path, policy, reporter, true)?;
 
     Ok(Pair {
         relay: relay_client,
@@ -170,6 +168,17 @@ pub fn assert_deployable(pair: &Pair) -> Result<()> {
     Ok(())
 }
 
+/// Managed sides in a given order, i.e. the ordered sides this provider
+/// actually installs or deploys to, dropping the ones it does not manage.
+fn managed_in_order(
+    provider: &ProviderRef,
+    options: &OptionMap,
+    order: [TunnelSide; 2],
+) -> Vec<TunnelSide> {
+    let managed = provider.managed_sides(options);
+    order.into_iter().filter(|s| managed.contains(s)).collect()
+}
+
 /// Ensure the provider and HTM's own prerequisites are installed on both hosts.
 pub fn install_on_pair(
     pair: &Pair,
@@ -181,10 +190,16 @@ pub fn install_on_pair(
 ) -> Result<Vec<(TunnelSide, InstalledVersion)>> {
     assert_deployable(pair)?;
 
-    let mut out = Vec::new();
-    let total = 2u32;
+    // A relay-forward provider installs software only on the relay; a
+    // point-to-point one on both. The benchmark tooling likewise follows the
+    // managed set rather than always touching both hosts.
+    let sides = managed_in_order(provider, &provider.default_options(), TunnelSide::ORDERED);
+    let needs_tun = provider.model().is_point_to_point_tun();
 
-    for (index, side) in TunnelSide::ORDERED.into_iter().enumerate() {
+    let mut out = Vec::new();
+    let total = sides.len() as u32;
+
+    for (index, side) in sides.into_iter().enumerate() {
         reporter.check()?;
         reporter.progress(index as u32, total);
         let label = pair.label(side).to_string();
@@ -219,15 +234,19 @@ pub fn install_on_pair(
             );
         }
 
-        // TUN has to exist before a tunnel can be built on it.
-        reporter.check()?;
-        if !facts::ensure_tun_available(ctx.client)? {
-            return Err(Error::Unsupported {
-                detail: format!(
-                    "{label}: /dev/net/tun is not available and the module could not be loaded. \
-                     A container needs the TUN device passed through before it can run a tunnel."
-                ),
-            });
+        // TUN has to exist before a TUN tunnel can be built on it. A SOCKS
+        // proxy or a port-forward relay needs no TUN, so the check is skipped
+        // for those models rather than blocking a host that cannot pass one.
+        if needs_tun {
+            reporter.check()?;
+            if !facts::ensure_tun_available(ctx.client)? {
+                return Err(Error::Unsupported {
+                    detail: format!(
+                        "{label}: /dev/net/tun is not available and the module could not be loaded. \
+                         A container needs the TUN device passed through before it can run a tunnel."
+                    ),
+                });
+            }
         }
 
         reporter.check()?;
@@ -414,7 +433,8 @@ pub fn deploy_and_start(
     Ok(seconds)
 }
 
-/// Write the configuration and unit files on both hosts, without starting.
+/// Write the configuration and unit files on the managed hosts, without
+/// starting. A relay-forward provider writes only to the relay.
 pub fn deploy_only(
     pair: &Pair,
     provider: &ProviderRef,
@@ -423,7 +443,7 @@ pub fn deploy_only(
     cancel: &Arc<AtomicBool>,
 ) -> Result<()> {
     reporter.stage("Writing configuration");
-    for side in TunnelSide::ORDERED {
+    for side in managed_in_order(provider, &plan.options, TunnelSide::ORDERED) {
         reporter.check()?;
         let ctx = pair.ctx(side, reporter, cancel);
         provider.deploy(&ctx, plan)?;
@@ -431,7 +451,7 @@ pub fn deploy_only(
     Ok(())
 }
 
-/// Start both units, exit node first.
+/// Start the managed units, exit node first.
 pub fn start_pair(
     pair: &Pair,
     provider: &ProviderRef,
@@ -441,7 +461,7 @@ pub fn start_pair(
 ) -> Result<()> {
     let unit = provider.service_name(&plan.instance);
 
-    for side in ServiceAction::Start.side_order() {
+    for side in managed_in_order(provider, &plan.options, ServiceAction::Start.side_order()) {
         let label = pair.label(side);
         if enable_at_boot {
             if let Err(e) = systemd::control(pair.client(side), &unit, "enable") {
@@ -452,9 +472,8 @@ pub fn start_pair(
                 );
             }
         }
-        systemd::control(pair.client(side), &unit, "start").map_err(|e| {
-            Error::msg(format!("{label}: could not start {unit}: {e}"))
-        })?;
+        systemd::control(pair.client(side), &unit, "start")
+            .map_err(|e| Error::msg(format!("{label}: could not start {unit}: {e}")))?;
         reporter.log_line(LogLevel::Info, Some(label), &format!("Started {unit}."));
     }
     Ok(())
@@ -525,6 +544,12 @@ pub fn wait_until_ready(
     reporter: &dyn Reporter,
     cancel: &Arc<AtomicBool>,
 ) -> Result<f64> {
+    // A SOCKS proxy or a port-forward relay has no TUN link to ping, so a
+    // different test decides readiness for those models.
+    if !provider.model().is_point_to_point_tun() {
+        return wait_until_ready_service(pair, provider, plan, timeout, reporter, cancel);
+    }
+
     let unit = provider.service_name(&plan.instance);
     let readiness = provider.readiness();
     let started = Instant::now();
@@ -600,9 +625,10 @@ pub fn wait_until_ready(
                     // Losing the journal is not fatal, but it blinds the checks
                     // above, so say so once instead of failing silently.
                     if journal_complaint.is_none() {
-                        let message =
-                            format!("{label}: the journal could not be read ({e}), so HTM cannot \
-                                     explain a failure from the server's own logs.");
+                        let message = format!(
+                            "{label}: the journal could not be read ({e}), so HTM cannot \
+                                     explain a failure from the server's own logs."
+                        );
                         reporter.log_line(LogLevel::Warn, None, &message);
                         journal_complaint = Some(message);
                     }
@@ -677,6 +703,155 @@ pub fn wait_until_ready(
         target,
         plan.tun_name,
         diagnosis,
+        both_journals(pair, &unit),
+    )))
+}
+
+/// Readiness for a tunnel with no TUN link: wait until every managed unit is
+/// active and every readiness probe the provider named is listening.
+///
+/// This is the counterpart of [`wait_until_ready`] for [`TunnelModel::SocksProxy`]
+/// and [`TunnelModel::RelayForward`]. There is no packet to bounce across a TUN
+/// device, so "working" is defined as the units staying up (not crash-looping),
+/// no fatal marker in the journal, and the listeners the provider expects —
+/// a SOCKS5 port, a forwarded port — actually bound.
+pub fn wait_until_ready_service(
+    pair: &Pair,
+    provider: &ProviderRef,
+    plan: &TunnelPlan,
+    timeout: Duration,
+    reporter: &dyn Reporter,
+    cancel: &Arc<AtomicBool>,
+) -> Result<f64> {
+    let unit = provider.service_name(&plan.instance);
+    let readiness = provider.readiness();
+    let probes = provider.readiness_probes(plan);
+    let sides = managed_in_order(provider, &plan.options, TunnelSide::ORDERED);
+    let started = Instant::now();
+
+    let mut cursors: [Option<String>; 2] = [None, None];
+    let mut baseline_restarts: [Option<u32>; 2] = [None, None];
+    let mut journal_complaint: Option<String> = None;
+    let mut last_note = Instant::now();
+
+    while started.elapsed() < timeout {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
+
+        let mut all_active = true;
+        for (index, &side) in sides.iter().enumerate() {
+            let label = pair.label(side);
+            let status = systemd::status(pair.client(side), &unit, None)?;
+
+            if !status.exists() {
+                return Err(Error::msg(format!(
+                    "{label}: the unit {unit} does not exist. The deployment did not complete."
+                )));
+            }
+            if status.is_failed() {
+                return Err(Error::msg(format!(
+                    "{label}: the tunnel unit failed to start.\n{}",
+                    both_journals(pair, &unit)
+                )));
+            }
+            if !status.is_active() {
+                all_active = false;
+            }
+
+            if let Some(restarts) = status.restarts {
+                match baseline_restarts[index] {
+                    None => baseline_restarts[index] = Some(restarts),
+                    Some(first) if restarts >= first.saturating_add(2) => {
+                        return Err(Error::msg(format!(
+                            "{label}: the service restarted {} times in {:.0}s, so it is crashing \
+                             on startup rather than still coming up.\n{}",
+                            restarts - first,
+                            started.elapsed().as_secs_f64(),
+                            both_journals(pair, &unit)
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+
+            match systemd::journal(pair.client(side), &unit, 80, cursors[index].as_deref()) {
+                Ok(chunk) => {
+                    cursors[index] = chunk.cursor.clone();
+                    for line in &chunk.lines {
+                        for marker in &readiness.fatal_markers {
+                            if line.contains(marker.as_str()) {
+                                return Err(Error::msg(format!(
+                                    "{label} reported a fatal error: {}\n{}",
+                                    util::truncate(line.trim(), 400),
+                                    both_journals(pair, &unit)
+                                )));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if journal_complaint.is_none() {
+                        let message = format!(
+                            "{label}: the journal could not be read ({e}), so HTM cannot \
+                             explain a failure from the server's own logs."
+                        );
+                        reporter.log_line(LogLevel::Warn, None, &message);
+                        journal_complaint = Some(message);
+                    }
+                }
+            }
+        }
+
+        // The units are up; now the listeners they are supposed to open must
+        // actually be bound. With no probes declared, an active unit is all we
+        // can assert, so take that as ready.
+        if all_active {
+            let mut all_listening = true;
+            let mut pending: Option<(TunnelSide, u16, bool)> = None;
+            for probe in &probes {
+                let (side, port, tcp) = match probe {
+                    ReadinessProbe::TcpPort { side, port } => (*side, *port, true),
+                    ReadinessProbe::UdpPort { side, port } => (*side, *port, false),
+                };
+                if !net::port_listening(pair.client(side), port, tcp).unwrap_or(false) {
+                    all_listening = false;
+                    pending = Some((side, port, tcp));
+                    break;
+                }
+            }
+            if all_listening {
+                return Ok(started.elapsed().as_secs_f64());
+            }
+            if last_note.elapsed() >= Duration::from_secs(10) {
+                last_note = Instant::now();
+                if let Some((side, port, tcp)) = pending {
+                    reporter.log_line(
+                        LogLevel::Debug,
+                        None,
+                        &format!(
+                            "Waiting for {} to listen on {}/{} ({:.0}s elapsed).",
+                            pair.label(side),
+                            port,
+                            if tcp { "tcp" } else { "udp" },
+                            started.elapsed().as_secs_f64()
+                        ),
+                    );
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(1200));
+    }
+
+    Err(Error::msg(format!(
+        "The tunnel did not come up within {}s. {}\n{}",
+        timeout.as_secs(),
+        if probes.is_empty() {
+            "The units did not all reach the active state.".to_string()
+        } else {
+            "The units are up but the expected listeners never bound.".to_string()
+        },
         both_journals(pair, &unit),
     )))
 }
@@ -783,9 +958,15 @@ fn both_journals(pair: &Pair, unit: &str) -> String {
     format!(
         "\n--- {} journal ---\n{}\n\n--- {} journal ---\n{}",
         pair.label(TunnelSide::Client),
-        util::truncate(&tail_journal(pair.client(TunnelSide::Client), unit, 40), 2500),
+        util::truncate(
+            &tail_journal(pair.client(TunnelSide::Client), unit, 40),
+            2500
+        ),
         pair.label(TunnelSide::Server),
-        util::truncate(&tail_journal(pair.client(TunnelSide::Server), unit, 40), 2500),
+        util::truncate(
+            &tail_journal(pair.client(TunnelSide::Server), unit, 40),
+            2500
+        ),
     )
 }
 

@@ -198,4 +198,47 @@ This list is what lets the UI explain *why* a setting is not editable per side.
 - [ ] Unit tests cover rendering both sides, normalisation, and matrix
       expansion. Those are the parts where being wrong is silent.
 
-CandyTunnel's implementation is the worked example for all of it.
+CandyTunnel's implementation is the worked example for all of it, and
+CopyTunnel is a second, smaller one.
+
+---
+
+## Providers that are not point-to-point TUN tunnels
+
+Not every tunnel is a `/30` TUN link the relay can ping. A provider declares its
+shape through `TunnelProvider::model`, which the orchestrator reads to decide how
+to deploy and test it:
+
+```rust
+fn model(&self) -> TunnelModel {
+    TunnelModel::SocksProxy   // or RelayForward, or the default PointToPointTun
+}
+```
+
+- **`PointToPointTun`** (the default) — the original model. Readiness is an ICMP
+  echo across the TUN link, and the throughput benchmark measures over it.
+  CandyTunnel and CopyTunnel.
+- **`SocksProxy`** — the relay exposes a local SOCKS5 proxy and there is no TUN
+  link. HTunnel.
+- **`RelayForward`** — the relay forwards ports to an upstream. Only the relay is
+  managed, unless a method also configures the far end. The Hiddify Relay
+  methods.
+
+Two more hooks support the non-TUN models:
+
+```rust
+/// Which sides HTM installs and deploys to for a given configuration. Both by
+/// default; a relay-forward provider returns only the relay, except where the
+/// chosen method also configures the upstream (HiddifyRelay's `wst`).
+fn managed_sides(&self, options: &OptionMap) -> Vec<TunnelSide>;
+
+/// Post-start checks for a tunnel with no TUN link to ping — a SOCKS5 port, a
+/// forwarded port. Ignored for PointToPointTun, which pings the link instead.
+fn readiness_probes(&self, plan: &TunnelPlan) -> Vec<ReadinessProbe>;
+```
+
+For a non-TUN provider, `expand_variants` returns an empty list and the
+Benchmark tab does not apply: the benchmark engine refuses anything that is not
+`PointToPointTun`, because there is no link to measure across. Build those
+tunnels from the wizard instead. HTunnel and HiddifyRelay are the worked
+examples for the two non-TUN models.
