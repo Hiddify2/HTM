@@ -28,6 +28,7 @@ route actually allows — you measure it.
 ## Contents
 
 - [Download](#download)
+- [Screenshots](#screenshots)
 - [What it does](#what-it-does)
 - [The two source-address modes](#the-two-source-address-modes)
 - [What your servers need](#what-your-servers-need)
@@ -68,6 +69,19 @@ Every release ships a matching `.sha256`:
 ```sh
 sha256sum -c htm-linux-x86_64.sha256
 ```
+
+---
+
+## Screenshots
+
+| | |
+|---|---|
+| **Servers** — SSH details for both hosts | **Install** — pick a provider and install method |
+| ![Servers tab](docs/screenshots/servers.png) | ![Install tab](docs/screenshots/install.png) |
+| **Providers** — five tunnel implementations | **Benchmark** — compare configurations over your route |
+| ![Provider dropdown](docs/screenshots/providers.png) | ![Benchmark tab](docs/screenshots/benchmark.png) |
+| **Tunnel settings** — protocol and relay access mode | **Relay access mode** — SOCKS proxy · port forward · TUN |
+| ![Hiddify Core settings](docs/screenshots/wizard-settings.png) | ![Relay access mode](docs/screenshots/relay-access-mode.png) |
 
 ---
 
