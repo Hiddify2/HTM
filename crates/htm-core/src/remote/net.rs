@@ -364,6 +364,7 @@ pub fn run_tcp_client(
     streams: u32,
     reverse: bool,
     bind_ip: Option<&str>,
+    socks: Option<&str>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<ThroughputSample> {
     let budget = Duration::from_secs(seconds as u64 + 90);
@@ -384,16 +385,26 @@ pub fn run_tcp_client(
                 reverse = if reverse { "--reverse " } else { "" },
             )
         }
-        Backend::Probe => format!(
-            "python3 {probe} client --host {server} --port {port} --mode tcp --seconds {seconds} \
-             --streams {streams} {reverse}",
-            probe = sh_quote(PROBE_PATH),
-            server = sh_quote(server_ip),
-            port = port,
-            seconds = seconds,
-            streams = streams.max(1),
-            reverse = if reverse { "--reverse" } else { "" },
-        ),
+        Backend::Probe => {
+            // Reaching the server through a SOCKS5 proxy is how a proxy tunnel's
+            // relay→exit path is measured; iperf3 cannot do it, so this is
+            // probe-only.
+            let socks_arg = match socks {
+                Some(p) if !p.is_empty() => format!(" --socks {}", sh_quote(p)),
+                _ => String::new(),
+            };
+            format!(
+                "python3 {probe} client --host {server} --port {port} --mode tcp --seconds {seconds} \
+                 --streams {streams} {reverse}{socks_arg}",
+                probe = sh_quote(PROBE_PATH),
+                server = sh_quote(server_ip),
+                port = port,
+                seconds = seconds,
+                streams = streams.max(1),
+                reverse = if reverse { "--reverse" } else { "" },
+                socks_arg = socks_arg,
+            )
+        }
     };
 
     let mut captured = String::new();
@@ -526,6 +537,93 @@ pub fn read_server_result(
         }
     }
     None
+}
+
+/// Start the bundled probe's latency server on the exit: it accepts `count`
+/// connections and closes each, so the relay can time the connect round-trip.
+///
+/// A tunnel with no TUN link cannot be pinged, so this stands in for ICMP. Only
+/// the probe backend has it; iperf3 is never used for latency here.
+pub fn start_probe_latency_server(
+    client: &SshClient,
+    bind_ip: &str,
+    port: u16,
+    count: u32,
+    seconds: u32,
+) -> Result<ServerHandle> {
+    let result_path = format!("{PROBE_RESULT}.{port}");
+    let _ = client.exec(&format!("rm -f {}", sh_quote(&result_path)));
+    let command = format!(
+        "timeout {budget} python3 {probe} serve --bind {bind} --port {port} --mode latency \
+         --count {count} --seconds {seconds} --out {out} >/dev/null 2>&1",
+        budget = seconds as u64 + 75,
+        probe = sh_quote(PROBE_PATH),
+        bind = sh_quote(bind_ip),
+        port = port,
+        count = count.max(1),
+        seconds = seconds,
+        out = sh_quote(&result_path),
+    );
+    let launch = format!(
+        "setsid nohup sh -c {} >/dev/null 2>&1 &",
+        sh_quote(&command)
+    );
+    client.exec_priv(&launch)?;
+    Ok(ServerHandle {
+        backend: Backend::Probe,
+        port,
+        result_path,
+    })
+}
+
+/// Run the probe's latency client on the relay, directly or through a SOCKS5
+/// proxy, and parse the round-trip statistics into a [`PingSample`].
+pub fn run_probe_latency_client(
+    client: &SshClient,
+    server_ip: &str,
+    port: u16,
+    count: u32,
+    socks: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<PingSample> {
+    let socks_arg = match socks {
+        Some(p) if !p.is_empty() => format!(" --socks {}", sh_quote(p)),
+        _ => String::new(),
+    };
+    let command = format!(
+        "python3 {probe} client --host {server} --port {port} --mode latency --count {count}{socks}",
+        probe = sh_quote(PROBE_PATH),
+        server = sh_quote(server_ip),
+        port = port,
+        count = count.max(1),
+        socks = socks_arg,
+    );
+    let mut captured = String::new();
+    let status = client.run_script_stream(
+        &format!("#!/bin/sh\n{command}\n"),
+        true,
+        cancel,
+        Duration::from_secs((count as u64).saturating_mul(2) + 90),
+        |line| {
+            captured.push_str(line);
+            captured.push('\n');
+        },
+    )?;
+    let v = extract_json(&captured).ok_or_else(|| Error::Parse {
+        what: "probe latency output".to_string(),
+        detail: describe_failure(status, &captured),
+    })?;
+    let num = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let samples = v.get("samples").and_then(Value::as_u64).unwrap_or(0) as u32;
+    Ok(PingSample {
+        transmitted: samples + v.get("lost").and_then(Value::as_u64).unwrap_or(0) as u32,
+        received: samples,
+        loss_pct: num("loss_percent"),
+        min_ms: num("min_ms"),
+        avg_ms: num("avg_ms"),
+        max_ms: num("max_ms"),
+        mdev_ms: num("mdev_ms"),
+    })
 }
 
 /// Turn a failed measurement into a message worth showing.

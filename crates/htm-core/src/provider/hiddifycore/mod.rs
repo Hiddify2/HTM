@@ -75,14 +75,16 @@ impl TunnelProvider for HiddifyCoreProvider {
         config::validate(options)
     }
 
-    fn expand_variants(&self, _selection: &MatrixSelection) -> Vec<BenchVariant> {
-        // No TUN link between the hosts to measure across, so there is nothing
-        // to benchmark and no variants to enumerate.
-        Vec::new()
+    fn expand_variants(&self, selection: &MatrixSelection) -> Vec<BenchVariant> {
+        config::expand(selection)
     }
 
     fn default_matrix(&self) -> MatrixSelection {
-        MatrixSelection::default()
+        config::default_matrix()
+    }
+
+    fn matrix_presets(&self) -> Vec<crate::provider::MatrixPreset> {
+        config::presets()
     }
 
     fn required_packages(&self, _manager: PackageManager) -> Vec<String> {
@@ -231,13 +233,40 @@ impl TunnelProvider for HiddifyCoreProvider {
             }
         });
 
-        // The relay's local proxy, in mixed mode. TUN mode opens no listener.
-        if config::inbound_mode(&options) == "mixed" {
-            out.push(ReadinessProbe::TcpPort {
+        // The relay's listeners depend on the access mode: a SOCKS port, the
+        // forwarded ports, or nothing at all for TUN.
+        match config::access_mode(&options).as_str() {
+            "socks" => out.push(ReadinessProbe::TcpPort {
                 side: TunnelSide::Client,
                 port: config::socks_port(plan),
-            });
+            }),
+            "forward" => {
+                for p in config::forward_ports(plan) {
+                    out.push(ReadinessProbe::TcpPort {
+                        side: TunnelSide::Client,
+                        port: p,
+                    });
+                }
+            }
+            _ => {}
         }
+        out
+    }
+
+    fn bench_access(&self, _plan: &TunnelPlan) -> crate::provider::BenchAccess {
+        // Benchmarking forces port-forward mode (see bench_plan_options), so the
+        // relay→exit path is measured to the relay's local forwarded port.
+        crate::provider::BenchAccess::LocalForward
+    }
+
+    fn bench_plan_options(&self, options: &OptionMap) -> OptionMap {
+        // Measure protocols over a port forward regardless of the user's chosen
+        // access mode, so there is always a measurable relay→exit path.
+        let mut out = options.clone();
+        out.insert(
+            config::keys::ACCESS_MODE.to_string(),
+            crate::model::OptValue::Choice("forward".to_string()),
+        );
         out
     }
 
@@ -309,18 +338,30 @@ mod tests {
             OptValue::Choice(protocol.into()),
         );
         p.options.insert(
-            config::keys::INBOUND_MODE.into(),
+            config::keys::ACCESS_MODE.into(),
             OptValue::Choice(mode.into()),
         );
         p
     }
 
     #[test]
-    fn it_is_a_socks_proxy_provider_that_is_not_benchmarkable() {
+    fn it_is_a_socks_proxy_provider_that_sweeps_protocols() {
         let p = HiddifyCoreProvider::new();
         assert_eq!(p.model(), TunnelModel::SocksProxy);
-        assert!(p.expand_variants(&p.default_matrix()).is_empty());
+        // Every protocol becomes one benchmark variant.
+        assert_eq!(
+            p.expand_variants(&p.default_matrix()).len(),
+            config::Protocol::ALL.len()
+        );
         assert_eq!(p.managed_sides(&p.default_options()).len(), 2);
+        // Benchmarking forces a measurable port-forward path.
+        assert_eq!(
+            p.bench_access(&plan_with("shadowsocks", "socks")),
+            crate::provider::BenchAccess::LocalForward
+        );
+        // ...and rewrites the access mode to forward for the measurement.
+        let benched = p.bench_plan_options(&plan_with("vmess", "socks").options);
+        assert_eq!(config::access_mode(&benched), "forward");
     }
 
     #[test]
@@ -334,7 +375,7 @@ mod tests {
     fn render_produces_a_config_and_the_template_unit() {
         let p = HiddifyCoreProvider::new();
         let rendered = p
-            .render(&plan_with("shadowsocks", "mixed"), TunnelSide::Server)
+            .render(&plan_with("shadowsocks", "socks"), TunnelSide::Server)
             .unwrap();
         assert_eq!(rendered.files.len(), 2);
         assert_eq!(rendered.files[0].mode, "0600");
@@ -342,9 +383,9 @@ mod tests {
     }
 
     #[test]
-    fn mixed_mode_probes_the_exit_port_and_the_relay_proxy() {
+    fn socks_mode_probes_the_exit_port_and_the_relay_proxy() {
         let p = HiddifyCoreProvider::new();
-        let probes = p.readiness_probes(&plan_with("vmess", "mixed"));
+        let probes = p.readiness_probes(&plan_with("vmess", "socks"));
         assert!(probes.contains(&ReadinessProbe::TcpPort {
             side: TunnelSide::Server,
             port: 8443

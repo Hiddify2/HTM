@@ -87,20 +87,6 @@ pub fn run(
 ) -> Result<BenchRun> {
     ctx.settings.validate().map_err(Error::Validation)?;
 
-    // The throughput benchmark measures across the point-to-point TUN link. A
-    // SOCKS proxy or a port-forward relay has none, so there is nothing to
-    // measure this way; deploy such a provider straight from the wizard instead.
-    if !provider.model().is_point_to_point_tun() {
-        return Err(Error::Unsupported {
-            detail: format!(
-                "{} tunnels have no TUN link to measure across, so HTM's throughput benchmark \
-                 does not apply to them. Create the tunnel directly from the wizard instead of \
-                 benchmarking it.",
-                provider.name()
-            ),
-        });
-    }
-
     if variants.is_empty() {
         return Err(Error::Validation(
             "The benchmark matrix produced no configurations to measure. Select at least one \
@@ -264,14 +250,22 @@ pub fn run(
 }
 
 /// Build the plan used to measure one variant.
-fn bench_plan(variant: &BenchVariant, ctx: &BenchContext, psk: &str) -> Result<TunnelPlan> {
+fn bench_plan(
+    provider: &ProviderRef,
+    variant: &BenchVariant,
+    ctx: &BenchContext,
+    psk: &str,
+) -> Result<TunnelPlan> {
+    // A provider may need a measurable access mode for benchmarking (e.g. a
+    // proxy provider measured in a port-forwarding mode).
+    let options = provider.bench_plan_options(&variant.options);
     let mut inputs = PlanInputs::new(
         BENCH_INSTANCE,
         ctx.provider_id.clone(),
         ctx.relay.clone(),
         ctx.exit.clone(),
         TunSlot::BENCHMARK,
-        variant.options.clone(),
+        options,
     );
     inputs.data_port = BENCH_DATA_PORT;
     inputs.pre_shared_key = psk.to_string();
@@ -314,7 +308,7 @@ fn measure_variant(
     reporter: &dyn Reporter,
     cancel: &Arc<AtomicBool>,
 ) -> Result<BenchMetrics> {
-    let plan = bench_plan(variant, ctx, psk)?;
+    let plan = bench_plan(provider, variant, ctx, psk)?;
     let repeats = ctx.settings.repeats.max(1);
     let mut best: Option<BenchMetrics> = None;
     let mut last_error: Option<Error> = None;
@@ -386,6 +380,21 @@ fn measure_once(
         std::thread::sleep(Duration::from_secs(settings.settle_secs as u64));
     }
     reporter.check()?;
+
+    // A tunnel with no TUN link (SOCKS proxy, port forward) is measured over the
+    // relay→exit path the provider exposes, not between TUN addresses.
+    match provider.bench_access(plan) {
+        crate::provider::BenchAccess::TunLink => {}
+        crate::provider::BenchAccess::None => {
+            return Err(Error::Unsupported {
+                detail: "this configuration cannot be measured".to_string(),
+            });
+        }
+        access => {
+            return measure_once_service(pair, plan, access, ctx, reporter, cancel, &mut metrics)
+                .map(|()| metrics);
+        }
+    }
 
     let relay = pair.client(TunnelSide::Client);
     let relay_tun = plan.client.tun_ip.clone();
@@ -483,6 +492,150 @@ fn measure_once(
     Ok(metrics)
 }
 
+/// Measure a tunnel that has no TUN link — a SOCKS proxy or a port forward.
+///
+/// The exit runs the bundled probe's servers (bound to all addresses, so it is
+/// reachable both at its loopback and its public address); the relay reaches
+/// them either through its local forwarded port or through its SOCKS proxy.
+/// Latency comes from the TCP-connect round-trip rather than ICMP, and UDP is
+/// not attempted (a SOCKS proxy cannot carry it).
+fn measure_once_service(
+    pair: &Pair,
+    _plan: &TunnelPlan,
+    access: crate::provider::BenchAccess,
+    ctx: &BenchContext,
+    reporter: &dyn Reporter,
+    cancel: &Arc<AtomicBool>,
+    metrics: &mut BenchMetrics,
+) -> Result<()> {
+    let settings = &ctx.settings;
+    let exit = pair.client(TunnelSide::Server);
+    let relay = pair.client(TunnelSide::Client);
+    let port = settings.measure_port;
+    let target = "127.0.0.1";
+    let socks_owned;
+    let socks = match access {
+        crate::provider::BenchAccess::Socks { socks_port } => {
+            socks_owned = format!("127.0.0.1:{socks_port}");
+            Some(socks_owned.as_str())
+        }
+        _ => None,
+    };
+
+    net::ensure_probe_installed(exit)?;
+    net::ensure_probe_installed(relay)?;
+
+    // ── Latency (TCP-connect round-trip) ──────────────────────────────────────
+    net::free_port(exit, port);
+    let handle = net::start_probe_latency_server(exit, "0.0.0.0", port, settings.ping_count, 60)?;
+    std::thread::sleep(Duration::from_millis(700));
+    let ping =
+        net::run_probe_latency_client(relay, target, port, settings.ping_count, socks, cancel);
+    net::stop_server(exit, &handle);
+    let ping = ping?;
+    if !ping.is_usable() {
+        return Err(Error::msg(
+            "the tunnel came up but no measurement connection completed, so it is not usable",
+        ));
+    }
+    metrics.latency_min_ms = ping.min_ms;
+    metrics.latency_avg_ms = ping.avg_ms;
+    metrics.latency_max_ms = ping.max_ms;
+    metrics.latency_mdev_ms = ping.mdev_ms;
+    metrics.icmp_loss_pct = ping.loss_pct;
+
+    // ── TCP, relay to exit ────────────────────────────────────────────────────
+    reporter.check()?;
+    let uplink = service_tcp(
+        pair,
+        port,
+        settings.throughput_secs,
+        settings.parallel_streams,
+        false,
+        socks,
+        cancel,
+    )?;
+    metrics.uplink_bps = uplink.bits_per_second;
+    metrics.retransmits = uplink.retransmits;
+
+    // ── TCP, exit to relay ────────────────────────────────────────────────────
+    if settings.test_downlink {
+        reporter.check()?;
+        let downlink = service_tcp(
+            pair,
+            port,
+            settings.throughput_secs,
+            settings.parallel_streams,
+            true,
+            socks,
+            cancel,
+        )?;
+        metrics.downlink_bps = downlink.bits_per_second;
+        metrics.downlink_tested = true;
+    }
+
+    Ok(())
+}
+
+/// One direction of a TCP throughput test over a non-TUN access path.
+fn service_tcp(
+    pair: &Pair,
+    port: u16,
+    seconds: u32,
+    streams: u32,
+    reverse: bool,
+    socks: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<net::ThroughputSample> {
+    let exit = pair.client(TunnelSide::Server);
+    let relay = pair.client(TunnelSide::Client);
+
+    net::free_port(exit, port);
+    let handle = net::start_server(
+        exit,
+        Backend::Probe,
+        "0.0.0.0",
+        port,
+        false,
+        seconds,
+        streams,
+        UDP_DATAGRAM,
+    )?;
+    std::thread::sleep(Duration::from_millis(700));
+
+    let client_result = net::run_tcp_client(
+        relay,
+        Backend::Probe,
+        "127.0.0.1",
+        port,
+        seconds,
+        streams,
+        reverse,
+        None,
+        socks,
+        cancel,
+    );
+
+    let outcome = match client_result {
+        // Uplink: the exit is the receiver, so its result file is authoritative.
+        // Downlink: the relay (client) is the receiver.
+        Ok(sample) => {
+            if !reverse {
+                match net::read_server_result(exit, &handle, false) {
+                    Some(server_sample) if server_sample.bits_per_second > 0.0 => Ok(server_sample),
+                    _ => Ok(sample),
+                }
+            } else {
+                Ok(sample)
+            }
+        }
+        Err(e) => Err(e),
+    };
+
+    net::stop_server(exit, &handle);
+    outcome
+}
+
 /// Run one TCP throughput measurement in a single direction.
 #[allow(clippy::too_many_arguments)]
 fn measure_tcp(
@@ -523,6 +676,7 @@ fn measure_tcp(
         streams,
         reverse,
         Some(relay_tun),
+        None,
         cancel,
     );
 
@@ -691,8 +845,14 @@ mod tests {
             description: String::new(),
             options: OptionMap::new(),
         };
-        let plan =
-            bench_plan(&variant, &context(), "0123456789abcdef0123456789abcdef").expect("plan");
+        let provider = crate::provider::registry::get_or_default("candytunnel");
+        let plan = bench_plan(
+            &provider,
+            &variant,
+            &context(),
+            "0123456789abcdef0123456789abcdef",
+        )
+        .expect("plan");
 
         assert_eq!(plan.instance, BENCH_INSTANCE);
         assert_eq!(plan.data_port, BENCH_DATA_PORT);
@@ -713,7 +873,14 @@ mod tests {
             options: OptionMap::new(),
         };
         let ctx = context();
-        let plan = bench_plan(&variant, &ctx, "0123456789abcdef0123456789abcdef").expect("plan");
+        let provider = crate::provider::registry::get_or_default("candytunnel");
+        let plan = bench_plan(
+            &provider,
+            &variant,
+            &ctx,
+            "0123456789abcdef0123456789abcdef",
+        )
+        .expect("plan");
         assert_eq!(plan.forward_ports, vec![ctx.settings.measure_port]);
     }
 

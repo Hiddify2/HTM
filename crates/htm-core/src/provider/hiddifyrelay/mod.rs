@@ -72,14 +72,25 @@ impl TunnelProvider for HiddifyRelayProvider {
         config::validate(options)
     }
 
-    fn expand_variants(&self, _selection: &MatrixSelection) -> Vec<BenchVariant> {
-        // A relay has no TUN link to measure across, so there is nothing to
-        // benchmark and no variants to enumerate.
-        Vec::new()
+    fn expand_variants(&self, selection: &MatrixSelection) -> Vec<BenchVariant> {
+        config::expand(selection)
     }
 
     fn default_matrix(&self) -> MatrixSelection {
-        MatrixSelection::default()
+        config::default_matrix()
+    }
+
+    fn matrix_presets(&self) -> Vec<crate::provider::MatrixPreset> {
+        config::presets()
+    }
+
+    fn bench_access(&self, _plan: &TunnelPlan) -> crate::provider::BenchAccess {
+        // Every method forwards the measurement port to the exit, so the
+        // relay→exit path is measured to the relay's local forwarded port.
+        // (IP-Tables is excluded from the default sweep; its kernel DNAT cannot
+        // be measured from the relay itself, so a hand-built iptables variant
+        // would simply fail to measure.)
+        crate::provider::BenchAccess::LocalForward
     }
 
     fn required_packages(&self, _manager: PackageManager) -> Vec<String> {
@@ -284,10 +295,15 @@ mod tests {
     }
 
     #[test]
-    fn it_is_a_relay_forward_provider() {
+    fn it_is_a_relay_forward_provider_that_sweeps_userspace_methods() {
         let p = HiddifyRelayProvider::new();
         assert_eq!(p.model(), TunnelModel::RelayForward);
-        assert!(p.expand_variants(&p.default_matrix()).is_empty());
+        // The default benchmark sweeps the four userspace forwarders.
+        assert_eq!(p.expand_variants(&p.default_matrix()).len(), 4);
+        assert_eq!(
+            p.bench_access(&plan_with("gost")),
+            crate::provider::BenchAccess::LocalForward
+        );
     }
 
     #[test]

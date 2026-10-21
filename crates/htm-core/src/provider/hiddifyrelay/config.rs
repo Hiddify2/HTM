@@ -238,6 +238,81 @@ pub fn describe(options: &OptionMap) -> String {
     method_of(options).id().to_string()
 }
 
+// ── Benchmark matrix ─────────────────────────────────────────────────────────
+//
+// The benchmark compares relay methods: each forwards the measurement port to
+// the exit, measured over the relay→exit path. IP-Tables is left out of the
+// default sweep because its kernel DNAT does not catch connections originating
+// on the relay itself, so it cannot be measured from the relay.
+
+use crate::model::{BenchVariant, MatrixSelection};
+use crate::provider::MatrixPreset;
+
+pub fn variant_id(options: &OptionMap) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for (key, value) in options {
+        hasher.update(key.as_bytes());
+        hasher.update(b"=");
+        hasher.update(value.short_display().as_bytes());
+        hasher.update(b";");
+    }
+    let digest = hasher.finalize();
+    digest[..6].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn expand(selection: &MatrixSelection) -> Vec<BenchVariant> {
+    let base = option_space().defaults();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for combo in selection.expand(&base) {
+        let normalized = normalize(&combo);
+        if validate(&normalized).is_err() {
+            continue;
+        }
+        let id = variant_id(&normalized);
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let method = method_of(&normalized);
+        out.push(BenchVariant {
+            id,
+            label: method.id().to_string(),
+            description: format!("Relay forwarding via {}", method.id()),
+            options: normalized,
+        });
+    }
+    out
+}
+
+/// The default benchmark: the userspace forwarders, which can be measured from
+/// the relay itself.
+pub fn default_matrix() -> MatrixSelection {
+    let mut s = MatrixSelection::default();
+    s.dimensions.insert(
+        keys::METHOD.to_string(),
+        vec![
+            OptValue::Choice("gost".into()),
+            OptValue::Choice("dokodemo".into()),
+            OptValue::Choice("haproxy".into()),
+            OptValue::Choice("socat".into()),
+        ],
+    );
+    s
+}
+
+pub fn presets() -> Vec<MatrixPreset> {
+    vec![MatrixPreset {
+        id: "methods".into(),
+        name: "Method sweep".into(),
+        description:
+            "Compare the userspace relay methods — GOST, Dokodemo-Door, HAProxy and Socat \
+                      — over your route to find the fastest forwarder."
+                .into(),
+        selection: default_matrix(),
+    }]
+}
+
 pub fn config_dir(instance: &str) -> String {
     format!("{BASE_DIR}/{instance}")
 }

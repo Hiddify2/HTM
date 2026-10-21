@@ -162,6 +162,64 @@ pub fn describe(options: &OptionMap) -> String {
     parts.join(" · ")
 }
 
+// ── Benchmark matrix ─────────────────────────────────────────────────────────
+//
+// HTunnel is measured through its SOCKS5 proxy; the sweep varies the parallel
+// tunnel count, which is what most affects its throughput.
+
+use crate::model::{BenchVariant, MatrixSelection};
+
+pub fn variant_id(options: &OptionMap) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for (key, value) in options {
+        hasher.update(key.as_bytes());
+        hasher.update(b"=");
+        hasher.update(value.short_display().as_bytes());
+        hasher.update(b";");
+    }
+    let digest = hasher.finalize();
+    digest[..6].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn expand(selection: &MatrixSelection) -> Vec<BenchVariant> {
+    let base = option_space().defaults();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for combo in selection.expand(&base) {
+        let normalized = normalize(&combo);
+        if validate(&normalized).is_err() {
+            continue;
+        }
+        let id = variant_id(&normalized);
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let count = normalized.int_or(keys::TUNNEL_COUNT, 4);
+        out.push(BenchVariant {
+            id,
+            label: format!("{count} tunnel(s)"),
+            description: format!("HTunnel with {count} parallel tunnel(s)"),
+            options: normalized,
+        });
+    }
+    out
+}
+
+pub fn default_matrix() -> MatrixSelection {
+    let mut s = MatrixSelection::default();
+    s.dimensions.insert(
+        keys::TUNNEL_COUNT.to_string(),
+        vec![
+            OptValue::Int(1),
+            OptValue::Int(2),
+            OptValue::Int(4),
+            OptValue::Int(8),
+        ],
+    );
+    s
+}
+
 /// Render one side's JSON config.
 pub fn render_json(plan: &TunnelPlan, side: TunnelSide) -> String {
     let options = normalize(&plan.options);

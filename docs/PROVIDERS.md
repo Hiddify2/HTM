@@ -237,11 +237,32 @@ fn managed_sides(&self, options: &OptionMap) -> Vec<TunnelSide>;
 fn readiness_probes(&self, plan: &TunnelPlan) -> Vec<ReadinessProbe>;
 ```
 
-For a non-TUN provider, `expand_variants` returns an empty list and the
-Benchmark tab does not apply: the benchmark engine refuses anything that is not
-`PointToPointTun`, because there is no link to measure across. Build those
-tunnels from the wizard instead. HTunnel, HiddifyCore and HiddifyRelay are the
-worked examples for the two non-TUN models.
+Every provider is benchmarkable, including the non-TUN ones. A provider declares
+how the benchmark should reach a measurement server on the exit:
+
+```rust
+fn bench_access(&self, plan: &TunnelPlan) -> BenchAccess {
+    BenchAccess::LocalForward   // or TunLink (default), Socks { socks_port }, None
+}
+
+/// Force a measurable access mode for the benchmark, if needed.
+fn bench_plan_options(&self, options: &OptionMap) -> OptionMap { options.clone() }
+```
+
+- `TunLink` — ICMP + iperf3 across the TUN link (the TUN providers).
+- `LocalForward` — the relay forwards the measurement port to the exit; the
+  bundled probe measures to `127.0.0.1:<measure_port>` on the relay, latency from
+  the TCP-connect round-trip. Relay-forward providers, and HiddifyCore in its
+  port-forward mode (which `bench_plan_options` forces for a measurable path).
+- `Socks { socks_port }` — the relay's SOCKS5 proxy carries the probe to a
+  server on the exit's loopback. HTunnel.
+- `None` — skip this configuration.
+
+`expand_variants` returns the variants worth measuring — the protocols for
+HiddifyCore, the methods for HiddifyRelay, the parallel-tunnel counts for
+HTunnel — so each provider's benchmark compares the dimension that matters for
+it. HTunnel, HiddifyCore and HiddifyRelay are the worked examples for the two
+non-TUN models.
 
 `HiddifyCore` is the breadth example: it wraps Hiddify Core (a sing-box build)
 and renders a sing-box JSON config for each side, so one provider carries a whole
