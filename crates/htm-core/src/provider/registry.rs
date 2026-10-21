@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::candytunnel::CandyTunnelProvider;
 use super::copytunnel::CopyTunnelProvider;
+use super::hiddifycore::HiddifyCoreProvider;
 use super::hiddifyrelay::HiddifyRelayProvider;
 use super::htunnel::HTunnelProvider;
 use super::ProviderRef;
@@ -17,6 +18,7 @@ pub fn all() -> Vec<ProviderRef> {
         Arc::new(CopyTunnelProvider::new()) as ProviderRef,
         Arc::new(HTunnelProvider::new()) as ProviderRef,
         Arc::new(HiddifyRelayProvider::new()) as ProviderRef,
+        Arc::new(HiddifyCoreProvider::new()) as ProviderRef,
     ]
 }
 

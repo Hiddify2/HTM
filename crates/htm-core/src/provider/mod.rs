@@ -17,6 +17,7 @@
 
 pub mod candytunnel;
 pub mod copytunnel;
+pub mod hiddifycore;
 pub mod hiddifyrelay;
 pub mod htunnel;
 pub mod registry;

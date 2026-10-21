@@ -240,5 +240,13 @@ fn readiness_probes(&self, plan: &TunnelPlan) -> Vec<ReadinessProbe>;
 For a non-TUN provider, `expand_variants` returns an empty list and the
 Benchmark tab does not apply: the benchmark engine refuses anything that is not
 `PointToPointTun`, because there is no link to measure across. Build those
-tunnels from the wizard instead. HTunnel and HiddifyRelay are the worked
-examples for the two non-TUN models.
+tunnels from the wizard instead. HTunnel, HiddifyCore and HiddifyRelay are the
+worked examples for the two non-TUN models.
+
+`HiddifyCore` is the breadth example: it wraps Hiddify Core (a sing-box build)
+and renders a sing-box JSON config for each side, so one provider carries a whole
+family of protocols — Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC and
+SOCKS — selected by an option. The exit runs the protocol server; the relay runs
+the client and captures traffic through either a local SOCKS5/HTTP proxy or a TUN
+device with `auto_route` for full IP forwarding. A new protocol is one more arm
+in the inbound/outbound match and one more entry in the `Protocol` enum.

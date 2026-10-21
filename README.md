@@ -357,16 +357,22 @@ applies) benchmark it:
 | **CandyTunnel** | point-to-point TUN | IP-spoofing TUN tunnel, seven transports | ✅ |
 | **CopyTunnel** | point-to-point TUN | Encrypted layer-3 TUN tunnel over UDP, six ciphers | ✅ |
 | **HTunnel** | SOCKS proxy | Local SOCKS5 proxy with fake-source-UDP downlink | ✖ (no TUN link to measure) |
+| **Hiddify Core** | SOCKS proxy | sing-box multi-protocol tunnel (SS, VMess, VLESS, Trojan, Hysteria2, TUIC, SOCKS), local proxy or TUN IP forwarding | ✖ |
 | **Hiddify Relay** | relay forward | Port forwarder to an upstream, six methods | ✖ |
 
 - **Point-to-point TUN** providers join the relay and the exit with a `/30` TUN
   link. Readiness is an ICMP echo across it, and the throughput benchmark
   measures over it. These are the providers the Benchmark tab works with.
-- **SOCKS proxy** providers (HTunnel) expose a local SOCKS5 port on the relay
-  instead of a TUN device. There is no link to ping, so readiness is the SOCKS5
-  port actually listening, and there is nothing to benchmark across. HTunnel's
-  uplink rides an upstream SOCKS5 proxy you point it at; HTM does not stand that
-  proxy up.
+- **SOCKS proxy** providers (HTunnel, Hiddify Core) expose a local SOCKS5 port
+  on the relay — or, for Hiddify Core, optionally a TUN device that forwards all
+  of the relay's IP traffic — instead of a point-to-point TUN link. There is no
+  link to ping, so readiness is the relay's inbound and the exit's protocol port
+  actually listening, and there is nothing to benchmark across. **Hiddify Core**
+  carries traffic over any of sing-box's protocols — Shadowsocks, VMess, VLESS,
+  Trojan, Hysteria2, TUIC or SOCKS — with the exit running the protocol server
+  and the relay the client; it is the way to get many protocols at once.
+  HTunnel's uplink rides an upstream SOCKS5 proxy you point it at; HTM does not
+  stand that proxy up.
 - **Relay forward** providers (Hiddify Relay) forward a set of ports to an
   upstream main server. HTM manages the relay (and, for the WST method, the
   upstream too); the other five methods leave the upstream an unchanged
