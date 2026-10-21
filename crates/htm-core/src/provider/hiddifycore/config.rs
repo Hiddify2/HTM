@@ -40,9 +40,10 @@ pub const UNIT_TEMPLATE: &str = "htm-hiddifycore@.service";
 pub mod keys {
     /// The proxy protocol carried between the relay and the exit.
     pub const PROTOCOL: &str = "protocol";
-    /// How the relay captures traffic: `mixed` (local proxy) or `tun` (IP fwd).
-    pub const INBOUND_MODE: &str = "inbound_mode";
-    /// Local SOCKS5/HTTP port for the `mixed` inbound.
+    /// How the relay takes in traffic: `socks` (local SOCKS5/HTTP proxy),
+    /// `forward` (forward specific ports to the exit) or `tun` (full IP forward).
+    pub const ACCESS_MODE: &str = "access_mode";
+    /// Local SOCKS5/HTTP port for the `socks` access mode.
     pub const SOCKS_PORT: &str = "socks_port";
     /// TLS SNI presented by the TLS-bearing protocols.
     pub const SNI: &str = "sni";
@@ -120,12 +121,12 @@ pub fn protocol_of(options: &OptionMap) -> Protocol {
         .unwrap_or(Protocol::Shadowsocks)
 }
 
-pub fn inbound_mode(options: &OptionMap) -> String {
-    let mode = options.str_or(keys::INBOUND_MODE, "mixed");
-    if mode == "tun" {
-        "tun".to_string()
-    } else {
-        "mixed".to_string()
+/// The relay access mode: `socks`, `forward` or `tun`.
+pub fn access_mode(options: &OptionMap) -> String {
+    match options.str_or(keys::ACCESS_MODE, "socks").as_str() {
+        "forward" => "forward".to_string(),
+        "tun" => "tun".to_string(),
+        _ => "socks".to_string(),
     }
 }
 
@@ -133,6 +134,18 @@ pub fn socks_port(plan: &TunnelPlan) -> u16 {
     normalize(&plan.options)
         .int_or(keys::SOCKS_PORT, 2080)
         .clamp(1, 65_535) as u16
+}
+
+/// The ports forwarded to the exit in `forward` access mode.
+pub fn forward_ports(plan: &TunnelPlan) -> Vec<u16> {
+    if plan.forward_ports.is_empty() {
+        vec![443]
+    } else {
+        let mut p = plan.forward_ports.clone();
+        p.sort_unstable();
+        p.dedup();
+        p
+    }
 }
 
 // ── Credential derivation ──────────────────────────────────────────────────
@@ -230,20 +243,26 @@ pub fn option_space() -> OptionSpace {
         bench_values: Vec::new(),
     });
     specs.push(OptionSpec {
-        key: keys::INBOUND_MODE.into(),
-        label: "Relay capture mode".into(),
-        help: "How the relay takes in traffic. 'mixed' exposes a local SOCKS5/HTTP proxy for apps \
-               on the relay to use; 'tun' creates a TUN device and forwards all of the relay's \
-               IPv4 traffic through the tunnel (needs /dev/net/tun)."
-            .into(),
+        key: keys::ACCESS_MODE.into(),
+        label: "Relay access mode".into(),
+        help:
+            "How the relay takes in traffic. 'SOCKS proxy' exposes a local SOCKS5/HTTP proxy for \
+               apps on the relay to use; 'Port forward' forwards the chosen ports to the exit; \
+               'TUN' creates a TUN device and forwards all of the relay's IPv4 traffic (needs \
+               /dev/net/tun)."
+                .into(),
         group: "Relay".into(),
         kind: OptionKind::Choice {
             choices: vec![
-                ("mixed".into(), "Local SOCKS5/HTTP proxy".into()),
+                ("socks".into(), "SOCKS proxy — local SOCKS5/HTTP".into()),
+                (
+                    "forward".into(),
+                    "Port forward — forward ports to the exit".into(),
+                ),
                 ("tun".into(), "TUN — forward all IP traffic".into()),
             ],
         },
-        default: OptValue::Choice("mixed".into()),
+        default: OptValue::Choice("socks".into()),
         benchmarkable: false,
         bench_values: Vec::new(),
     });
@@ -286,8 +305,8 @@ pub fn normalize(options: &OptionMap) -> OptionMap {
             OptValue::Choice("shadowsocks".into()),
         );
     }
-    let mode = inbound_mode(&out);
-    out.insert(keys::INBOUND_MODE.into(), OptValue::Choice(mode));
+    let mode = access_mode(&out);
+    out.insert(keys::ACCESS_MODE.into(), OptValue::Choice(mode));
     out
 }
 
@@ -318,8 +337,115 @@ pub fn needs_certificate(plan: &TunnelPlan) -> bool {
 
 pub fn describe(options: &OptionMap) -> String {
     let p = protocol_of(options);
-    let mode = inbound_mode(options);
+    let mode = access_mode(options);
     format!("{} · {}", p.id(), mode)
+}
+
+// ── Benchmark matrix ─────────────────────────────────────────────────────────
+//
+// The benchmark compares protocols: each is measured over the relay→exit path
+// (in port-forward mode, which the engine forces for a measurable path), so the
+// user can see which protocol their route carries fastest.
+
+use crate::model::{BenchVariant, MatrixSelection};
+use crate::provider::MatrixPreset;
+
+/// A short, stable id for a configuration, derived from its normalised options.
+pub fn variant_id(options: &OptionMap) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for (key, value) in options {
+        hasher.update(key.as_bytes());
+        hasher.update(b"=");
+        hasher.update(value.short_display().as_bytes());
+        hasher.update(b";");
+    }
+    let digest = hasher.finalize();
+    digest[..6].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Expand a selection into distinct, valid variants.
+pub fn expand(selection: &MatrixSelection) -> Vec<BenchVariant> {
+    let base = option_space().defaults();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for combo in selection.expand(&base) {
+        let normalized = normalize(&combo);
+        if validate(&normalized).is_err() {
+            continue;
+        }
+        let id = variant_id(&normalized);
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let proto = protocol_of(&normalized);
+        out.push(BenchVariant {
+            id,
+            label: proto.id().to_string(),
+            description: format!(
+                "{} carried over the {} protocol{}",
+                "relay to exit",
+                proto.id(),
+                if proto.needs_tls() {
+                    ", TLS (self-signed)"
+                } else {
+                    ""
+                }
+            ),
+            options: normalized,
+        });
+    }
+    out
+}
+
+fn protocol_dimension() -> Vec<OptValue> {
+    Protocol::ALL
+        .iter()
+        .map(|p| OptValue::Choice(p.id().to_string()))
+        .collect()
+}
+
+/// The default benchmark: every protocol once, to find the fastest over the
+/// route.
+pub fn default_matrix() -> MatrixSelection {
+    let mut s = MatrixSelection::default();
+    s.dimensions
+        .insert(keys::PROTOCOL.to_string(), protocol_dimension());
+    s
+}
+
+pub fn presets() -> Vec<MatrixPreset> {
+    let mut out = Vec::new();
+    out.push(MatrixPreset {
+        id: "protocols".into(),
+        name: "Protocol sweep".into(),
+        description:
+            "Every protocol once — Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC and \
+                      SOCKS — measured over your route to find the fastest."
+                .into(),
+        selection: default_matrix(),
+    });
+    {
+        let mut s = MatrixSelection::default();
+        s.dimensions.insert(
+            keys::PROTOCOL.to_string(),
+            vec![
+                OptValue::Choice("shadowsocks".into()),
+                OptValue::Choice("vmess".into()),
+                OptValue::Choice("vless".into()),
+            ],
+        );
+        out.push(MatrixPreset {
+            id: "no-tls".into(),
+            name: "No-TLS protocols".into(),
+            description:
+                "Shadowsocks, VMess and VLESS — the protocols that need no certificate. A \
+                          quick comparison of the lightest options."
+                    .into(),
+            selection: s,
+        });
+    }
+    out
 }
 
 // ── sing-box rendering ─────────────────────────────────────────────────────
@@ -419,11 +545,18 @@ fn client_outbound(plan: &TunnelPlan) -> Value {
     }
 }
 
-/// The relay's inbound, per capture mode.
-fn client_inbound(plan: &TunnelPlan) -> Value {
+/// The relay's inbounds, per access mode.
+///
+/// * `socks`   — a single local SOCKS5/HTTP proxy.
+/// * `tun`     — a TUN device with `auto_route` for full IP forwarding.
+/// * `forward` — one `direct` inbound per forwarded port, each overriding its
+///   destination to the exit's loopback on the same port, so the connection is
+///   carried over the protocol to a service (or the benchmark server) on the
+///   exit.
+fn client_inbounds(plan: &TunnelPlan) -> Vec<Value> {
     let options = normalize(&plan.options);
-    if inbound_mode(&options) == "tun" {
-        json!({
+    match access_mode(&options).as_str() {
+        "tun" => vec![json!({
             "type": "tun",
             "tag": "in",
             "address": ["172.19.0.1/30"],
@@ -431,14 +564,26 @@ fn client_inbound(plan: &TunnelPlan) -> Value {
             "auto_route": true,
             "strict_route": true,
             "stack": "system",
-        })
-    } else {
-        json!({
+        })],
+        "forward" => forward_ports(plan)
+            .into_iter()
+            .map(|p| {
+                json!({
+                    "type": "direct",
+                    "tag": format!("in-{p}"),
+                    "listen": "0.0.0.0",
+                    "listen_port": p,
+                    "override_address": "127.0.0.1",
+                    "override_port": p,
+                })
+            })
+            .collect(),
+        _ => vec![json!({
             "type": "mixed",
             "tag": "in",
             "listen": "127.0.0.1",
             "listen_port": options.int_or(keys::SOCKS_PORT, 2080),
-        })
+        })],
     }
 }
 
@@ -466,7 +611,7 @@ pub fn render_client(plan: &TunnelPlan) -> String {
     let cfg = json!({
         "log": { "level": plan.log_level, "timestamp": true },
         "dns": { "servers": [{ "address": "tls://8.8.8.8" }] },
-        "inbounds": [client_inbound(plan)],
+        "inbounds": client_inbounds(plan),
         "outbounds": [
             client_outbound(plan),
             { "type": "direct", "tag": "direct" },
@@ -566,7 +711,7 @@ mod tests {
         p.options
             .insert(keys::PROTOCOL.into(), OptValue::Choice(protocol.into()));
         p.options
-            .insert(keys::INBOUND_MODE.into(), OptValue::Choice(mode.into()));
+            .insert(keys::ACCESS_MODE.into(), OptValue::Choice(mode.into()));
         p
     }
 
@@ -636,12 +781,29 @@ mod tests {
     }
 
     #[test]
-    fn mixed_mode_opens_a_local_proxy_port() {
-        let p = plan_with("vless", "mixed");
+    fn socks_mode_opens_a_local_proxy_port() {
+        let p = plan_with("vless", "socks");
         let client = parse(&render_client(&p));
         assert_eq!(client["inbounds"][0]["type"], "mixed");
         assert_eq!(client["inbounds"][0]["listen"], "127.0.0.1");
         assert_eq!(client["inbounds"][0]["listen_port"], 2080);
+    }
+
+    #[test]
+    fn forward_mode_makes_one_direct_inbound_per_port_to_the_exit_loopback() {
+        let mut p = plan_with("vmess", "forward");
+        p.forward_ports = vec![443, 8443];
+        let client = parse(&render_client(&p));
+        let inbounds = client["inbounds"].as_array().unwrap();
+        assert_eq!(inbounds.len(), 2);
+        assert_eq!(inbounds[0]["type"], "direct");
+        assert_eq!(inbounds[0]["override_address"], "127.0.0.1");
+        // Each forwarded port appears as a listener.
+        let ports: Vec<u64> = inbounds
+            .iter()
+            .map(|i| i["listen_port"].as_u64().unwrap())
+            .collect();
+        assert!(ports.contains(&443) && ports.contains(&8443));
     }
 
     #[test]

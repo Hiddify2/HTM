@@ -75,14 +75,12 @@ impl TunnelProvider for HTunnelProvider {
         config::validate(options)
     }
 
-    fn expand_variants(&self, _selection: &MatrixSelection) -> Vec<BenchVariant> {
-        // HTunnel has no TUN link to measure across, so HTM's throughput
-        // benchmark does not apply; there are no variants to enumerate.
-        Vec::new()
+    fn expand_variants(&self, selection: &MatrixSelection) -> Vec<BenchVariant> {
+        config::expand(selection)
     }
 
     fn default_matrix(&self) -> MatrixSelection {
-        MatrixSelection::default()
+        config::default_matrix()
     }
 
     fn required_packages(&self, _manager: PackageManager) -> Vec<String> {
@@ -216,6 +214,14 @@ impl TunnelProvider for HTunnelProvider {
         }]
     }
 
+    fn bench_access(&self, plan: &TunnelPlan) -> crate::provider::BenchAccess {
+        // Measured through the relay's SOCKS5 proxy to a probe server on the
+        // exit's loopback.
+        crate::provider::BenchAccess::Socks {
+            socks_port: config::socks_port(plan),
+        }
+    }
+
     fn readiness(&self) -> Readiness {
         Readiness {
             ready_markers: vec![
@@ -288,9 +294,13 @@ mod tests {
     }
 
     #[test]
-    fn it_is_not_benchmarkable() {
+    fn it_sweeps_tunnel_counts_and_measures_over_socks() {
         let p = HTunnelProvider::new();
-        assert!(p.expand_variants(&p.default_matrix()).is_empty());
+        assert!(!p.expand_variants(&p.default_matrix()).is_empty());
+        assert_eq!(
+            p.bench_access(&plan()),
+            crate::provider::BenchAccess::Socks { socks_port: 9234 }
+        );
     }
 
     #[test]

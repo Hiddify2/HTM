@@ -75,6 +75,36 @@ impl TunnelModel {
     }
 }
 
+/// How the benchmark reaches a measurement server on the exit from the relay.
+///
+/// The throughput benchmark always measures the relay→exit path, but *how* the
+/// relay reaches the exit's measurement server depends on the tunnel's shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchAccess {
+    /// Measure directly across the point-to-point TUN link: ICMP latency and
+    /// iperf3/probe between the two TUN addresses. The original path, used by
+    /// the TUN providers.
+    TunLink,
+    /// The relay forwards the measurement port through the tunnel to a server on
+    /// the exit's loopback. The benchmark runs the bundled probe to
+    /// `127.0.0.1:<measure_port>` on the relay, and takes latency from the
+    /// TCP-connect round-trip. Used by relay-forward providers and by any proxy
+    /// provider whose benchmark runs in a port-forwarding mode.
+    LocalForward,
+    /// The relay exposes a SOCKS5 proxy on this port; the benchmark reaches the
+    /// exit's loopback server through it with the bundled probe. iperf3 cannot
+    /// speak SOCKS, so the probe is always used here.
+    Socks { socks_port: u16 },
+    /// This configuration cannot be measured; the benchmark skips it.
+    None,
+}
+
+impl BenchAccess {
+    pub fn is_measurable(self) -> bool {
+        !matches!(self, BenchAccess::None)
+    }
+}
+
 /// A post-start check the orchestrator runs to confirm a non-TUN tunnel is
 /// actually working, since those have no TUN link to ping.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +378,19 @@ pub trait TunnelProvider: Send + Sync {
     /// Ignored for [`TunnelModel::PointToPointTun`], which pings the TUN link.
     fn readiness_probes(&self, _plan: &TunnelPlan) -> Vec<ReadinessProbe> {
         Vec::new()
+    }
+
+    /// How the benchmark should measure this configuration. Defaults to the
+    /// point-to-point TUN path; non-TUN providers return a port-forward or SOCKS
+    /// access, or [`BenchAccess::None`] when a configuration cannot be measured.
+    fn bench_access(&self, _plan: &TunnelPlan) -> BenchAccess {
+        BenchAccess::TunLink
+    }
+
+    /// Adjust a configuration's options for benchmarking, e.g. force a
+    /// measurable access mode. Returns the options unchanged by default.
+    fn bench_plan_options(&self, options: &OptionMap) -> OptionMap {
+        options.clone()
     }
 
     /// How to tell a started tunnel is working.

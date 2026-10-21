@@ -352,27 +352,39 @@ HTM ships four tunnel implementations. They do not all work the same way, so
 each declares a **model** that tells HTM how to deploy, test and (where it
 applies) benchmark it:
 
-| Provider | Model | What it is | Benchmarkable |
-|----------|-------|------------|---------------|
-| **CandyTunnel** | point-to-point TUN | IP-spoofing TUN tunnel, seven transports | ✅ |
-| **CopyTunnel** | point-to-point TUN | Encrypted layer-3 TUN tunnel over UDP, six ciphers | ✅ |
-| **HTunnel** | SOCKS proxy | Local SOCKS5 proxy with fake-source-UDP downlink | ✖ (no TUN link to measure) |
-| **Hiddify Core** | SOCKS proxy | sing-box multi-protocol tunnel (SS, VMess, VLESS, Trojan, Hysteria2, TUIC, SOCKS), local proxy or TUN IP forwarding | ✖ |
-| **Hiddify Relay** | relay forward | Port forwarder to an upstream, six methods | ✖ |
+| Provider | Model | What it is | Benchmark sweeps |
+|----------|-------|------------|------------------|
+| **CandyTunnel** | point-to-point TUN | IP-spoofing TUN tunnel, seven transports | transports, mux, FEC, … |
+| **CopyTunnel** | point-to-point TUN | Encrypted layer-3 TUN tunnel over UDP, six ciphers | ciphers, obfuscation |
+| **HTunnel** | SOCKS proxy | Local SOCKS5 proxy with fake-source-UDP downlink | parallel tunnels |
+| **Hiddify Core** | SOCKS proxy | sing-box multi-protocol tunnel (SS, VMess, VLESS, Trojan, Hysteria2, TUIC, SOCKS); SOCKS proxy, port forward or full TUN on the relay | protocols |
+| **Hiddify Relay** | relay forward | Port forwarder to an upstream, six methods | methods |
+
+**Every provider is benchmarkable.** The TUN providers are measured across the
+point-to-point TUN link (ICMP + iperf3). The others have no such link, so HTM
+measures the relay→exit path with its bundled probe: a port-forward provider is
+measured to a forwarded port on the relay, and a SOCKS-proxy provider through
+its proxy, with latency taken from the TCP-connect round-trip. Each provider's
+benchmark sweeps the dimension that matters for it — which is how you find the
+fastest protocol, cipher or relay method over your route.
 
 - **Point-to-point TUN** providers join the relay and the exit with a `/30` TUN
   link. Readiness is an ICMP echo across it, and the throughput benchmark
   measures over it. These are the providers the Benchmark tab works with.
 - **SOCKS proxy** providers (HTunnel, Hiddify Core) expose a local SOCKS5 port
-  on the relay — or, for Hiddify Core, optionally a TUN device that forwards all
-  of the relay's IP traffic — instead of a point-to-point TUN link. There is no
-  link to ping, so readiness is the relay's inbound and the exit's protocol port
-  actually listening, and there is nothing to benchmark across. **Hiddify Core**
+  on the relay — or, for Hiddify Core, a **port forward** to the exit or a TUN
+  device that forwards all of the relay's IP traffic — instead of a
+  point-to-point TUN link. The relay access mode (SOCKS proxy / port forward /
+  TUN) is chosen per tunnel in the wizard. Readiness is the relay's inbound and
+  the exit's protocol port actually listening. **Hiddify Core**
   carries traffic over any of sing-box's protocols — Shadowsocks, VMess, VLESS,
   Trojan, Hysteria2, TUIC or SOCKS — with the exit running the protocol server
   and the relay the client; it is the way to get many protocols at once.
   HTunnel's uplink rides an upstream SOCKS5 proxy you point it at; HTM does not
   stand that proxy up.
+- The **Benchmark** tab works for every provider. For a point-to-point TUN
+  provider it measures across the TUN link; for the others it measures the
+  relay→exit path through a forwarded port or the SOCKS proxy.
 - **Relay forward** providers (Hiddify Relay) forward a set of ports to an
   upstream main server. HTM manages the relay (and, for the WST method, the
   upstream too); the other five methods leave the upstream an unchanged

@@ -68,6 +68,63 @@ def make_payload(size):
     return (chunk * reps)[:size]
 
 
+def socks5_connect(proxy, dst_host, dst_port, timeout):
+    """Open a TCP socket to dst via a SOCKS5 proxy "host:port".
+
+    Used to measure a tunnel whose relay exposes only a SOCKS5 proxy: the probe
+    client reaches the exit's measurement server through it, with no auth. Only
+    the small slice of RFC 1928 the probe needs is implemented.
+    """
+    phost, pport = proxy.rsplit(":", 1)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect((phost, int(pport)))
+    # Greeting: version 5, one method, "no authentication".
+    sock.sendall(b"\x05\x01\x00")
+    reply = _recv_exact(sock, 2)
+    if reply[0:1] != b"\x05" or reply[1:2] != b"\x00":
+        raise OSError("SOCKS5 proxy refused the no-auth method")
+    # CONNECT request, address as a domain/literal so the proxy resolves it.
+    host_bytes = dst_host.encode("idna") if isinstance(dst_host, str) else dst_host
+    req = b"\x05\x01\x00\x03" + struct.pack("B", len(host_bytes)) + host_bytes
+    req += struct.pack(">H", dst_port)
+    sock.sendall(req)
+    head = _recv_exact(sock, 4)
+    if head[1:2] != b"\x00":
+        raise OSError("SOCKS5 CONNECT failed with code %d" % head[1])
+    atyp = head[3:4]
+    if atyp == b"\x01":
+        _recv_exact(sock, 4 + 2)
+    elif atyp == b"\x04":
+        _recv_exact(sock, 16 + 2)
+    elif atyp == b"\x03":
+        ln = _recv_exact(sock, 1)[0]
+        _recv_exact(sock, ln + 2)
+    else:
+        raise OSError("SOCKS5 proxy returned an unknown address type")
+    return sock
+
+
+def _recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        part = sock.recv(n - len(buf))
+        if not part:
+            raise OSError("connection closed during SOCKS5 negotiation")
+        buf += part
+    return buf
+
+
+def open_stream(host, port, timeout, socks=None):
+    """A TCP socket to host:port, directly or through a SOCKS5 proxy."""
+    if socks:
+        return socks5_connect(socks, host, port, timeout)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect((host, port))
+    return s
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TCP
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,20 +276,18 @@ def serve_tcp(bind, port, seconds, expect_streams):
     return result
 
 
-def client_tcp(host, port, seconds, streams, reverse, connect_timeout):
+def client_tcp(host, port, seconds, streams, reverse, connect_timeout, socks=None):
     role = ROLE_DOWNLOAD if reverse else ROLE_UPLOAD
     payload = make_payload(BLOCK_SIZE)
     header = HEADER.pack(MAGIC, role, streams, seconds, 0)
 
-    socks = []
+    socks_conns = []
     for _ in range(streams):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(connect_timeout)
-        s.connect((host, port))
+        s = open_stream(host, port, connect_timeout, socks)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.sendall(header)
         s.settimeout(seconds + 45)
-        socks.append(s)
+        socks_conns.append(s)
 
     stats_list = []
     threads = []
@@ -262,7 +317,7 @@ def client_tcp(host, port, seconds, streams, reverse, connect_timeout):
         except OSError:
             pass
 
-    for s in socks:
+    for s in socks_conns:
         t = threading.Thread(target=run, args=(s,))
         t.daemon = True
         t.start()
@@ -275,6 +330,81 @@ def client_tcp(host, port, seconds, streams, reverse, connect_timeout):
     result["side"] = "client"
     result["role"] = "download" if reverse else "upload"
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Latency (TCP connect round-trip)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A tunnel with no TUN link cannot be pinged with ICMP, so round-trip time is
+# taken from how long a TCP connection to the exit's measurement server takes to
+# establish through the tunnel. It is a connection-setup RTT, not an echo, but it
+# tracks the path latency closely enough to rank configurations against it.
+
+
+def serve_latency(bind, port, count, seconds):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((bind, port))
+    srv.listen(128)
+    srv.settimeout(seconds + 60)
+    accepted = 0
+    try:
+        while accepted < count:
+            try:
+                conn, _addr = srv.accept()
+            except socket.timeout:
+                break
+            accepted += 1
+            try:
+                conn.close()
+            except OSError:
+                pass
+    finally:
+        try:
+            srv.close()
+        except OSError:
+            pass
+    return {"mode": "latency", "side": "server", "accepted": accepted, "errors": []}
+
+
+def client_latency(host, port, count, connect_timeout, socks=None):
+    samples = []
+    lost = 0
+    for _ in range(max(count, 1)):
+        start = time.monotonic()
+        try:
+            s = open_stream(host, port, connect_timeout, socks)
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            samples.append(elapsed_ms)
+            try:
+                s.close()
+            except OSError:
+                pass
+        except OSError:
+            lost += 1
+        time.sleep(0.05)
+
+    if samples:
+        mn = min(samples)
+        mx = max(samples)
+        avg = sum(samples) / len(samples)
+        mdev = sum(abs(x - avg) for x in samples) / len(samples)
+    else:
+        mn = mx = avg = mdev = 0.0
+    total = len(samples) + lost
+    return {
+        "mode": "latency",
+        "side": "client",
+        "min_ms": round(mn, 4),
+        "avg_ms": round(avg, 4),
+        "max_ms": round(mx, 4),
+        "mdev_ms": round(mdev, 4),
+        "samples": len(samples),
+        "lost": lost,
+        "loss_percent": round((lost * 100.0 / total) if total else 0.0, 4),
+        "errors": [],
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,28 +597,35 @@ def main(argv):
     s = sub.add_parser("serve")
     s.add_argument("--bind", default="0.0.0.0")
     s.add_argument("--port", type=int, required=True)
-    s.add_argument("--mode", choices=["tcp", "udp"], default="tcp")
+    s.add_argument("--mode", choices=["tcp", "udp", "latency"], default="tcp")
     s.add_argument("--seconds", type=int, default=10)
     s.add_argument("--streams", type=int, default=1)
+    s.add_argument("--count", type=int, default=20)
     s.add_argument("--datagram-size", type=int, default=1200)
     s.add_argument("--out", required=True)
 
     c = sub.add_parser("client")
     c.add_argument("--host", required=True)
     c.add_argument("--port", type=int, required=True)
-    c.add_argument("--mode", choices=["tcp", "udp"], default="tcp")
+    c.add_argument("--mode", choices=["tcp", "udp", "latency"], default="tcp")
     c.add_argument("--seconds", type=int, default=10)
     c.add_argument("--streams", type=int, default=1)
+    c.add_argument("--count", type=int, default=20)
     c.add_argument("--reverse", action="store_true")
     c.add_argument("--mbits", type=int, default=50)
     c.add_argument("--datagram-size", type=int, default=1200)
     c.add_argument("--connect-timeout", type=float, default=20.0)
+    # When set, reach the server through this SOCKS5 proxy "host:port" instead of
+    # dialling it directly — for tunnels whose relay exposes only a SOCKS proxy.
+    c.add_argument("--socks", default=None)
 
     args = parser.parse_args(argv)
 
     if args.command == "serve":
         if args.mode == "tcp":
             result = serve_tcp(args.bind, args.port, args.seconds, max(args.streams, 1))
+        elif args.mode == "latency":
+            result = serve_latency(args.bind, args.port, max(args.count, 1), args.seconds)
         else:
             result = serve_udp(args.bind, args.port, args.seconds, args.datagram_size)
         with open(args.out, "w") as fh:
@@ -505,6 +642,11 @@ def main(argv):
                 max(args.streams, 1),
                 args.reverse,
                 args.connect_timeout,
+                args.socks,
+            )
+        elif args.mode == "latency":
+            result = client_latency(
+                args.host, args.port, max(args.count, 1), args.connect_timeout, args.socks
             )
         else:
             result = client_udp(
