@@ -87,6 +87,20 @@ pub fn run(
 ) -> Result<BenchRun> {
     ctx.settings.validate().map_err(Error::Validation)?;
 
+    // The throughput benchmark measures across the point-to-point TUN link. A
+    // SOCKS proxy or a port-forward relay has none, so there is nothing to
+    // measure this way; deploy such a provider straight from the wizard instead.
+    if !provider.model().is_point_to_point_tun() {
+        return Err(Error::Unsupported {
+            detail: format!(
+                "{} tunnels have no TUN link to measure across, so HTM's throughput benchmark \
+                 does not apply to them. Create the tunnel directly from the wizard instead of \
+                 benchmarking it.",
+                provider.name()
+            ),
+        });
+    }
+
     if variants.is_empty() {
         return Err(Error::Validation(
             "The benchmark matrix produced no configurations to measure. Select at least one \
@@ -141,19 +155,16 @@ pub fn run(
         }
 
         reporter.progress(index as u32, total);
-        reporter.stage(&format!(
-            "[{}/{}] {}",
-            index + 1,
-            total,
-            variant.label
-        ));
+        reporter.stage(&format!("[{}/{}] {}", index + 1, total, variant.label));
 
         run.results[index].outcome = BenchOutcome::Running;
         run.results[index].started_at = Some(chrono::Utc::now());
         reporter.payload(JobPayload::BenchProgress(Box::new(run.clone())));
 
         let started = Instant::now();
-        let outcome = measure_variant(pair, provider, variant, ctx, &psk, backend, reporter, cancel);
+        let outcome = measure_variant(
+            pair, provider, variant, ctx, &psk, backend, reporter, cancel,
+        );
         let elapsed = started.elapsed().as_secs_f64();
 
         // Whatever happened, leave nothing running before the next variant.
@@ -253,11 +264,7 @@ pub fn run(
 }
 
 /// Build the plan used to measure one variant.
-fn bench_plan(
-    variant: &BenchVariant,
-    ctx: &BenchContext,
-    psk: &str,
-) -> Result<TunnelPlan> {
+fn bench_plan(variant: &BenchVariant, ctx: &BenchContext, psk: &str) -> Result<TunnelPlan> {
     let mut inputs = PlanInputs::new(
         BENCH_INSTANCE,
         ctx.provider_id.clone(),
@@ -344,8 +351,9 @@ fn measure_variant(
 
     match best {
         Some(metrics) => Ok(metrics),
-        None => Err(last_error
-            .unwrap_or_else(|| Error::msg("the configuration could not be measured"))),
+        None => {
+            Err(last_error.unwrap_or_else(|| Error::msg("the configuration could not be measured")))
+        }
     }
 }
 
@@ -526,9 +534,7 @@ fn measure_tcp(
             // its result file is the number that counts.
             if backend == Backend::Probe && !reverse {
                 match net::read_server_result(exit, &handle, false) {
-                    Some(server_sample) if server_sample.bits_per_second > 0.0 => {
-                        Ok(server_sample)
-                    }
+                    Some(server_sample) if server_sample.bits_per_second > 0.0 => Ok(server_sample),
                     _ => Ok(sample),
                 }
             } else {
@@ -685,8 +691,8 @@ mod tests {
             description: String::new(),
             options: OptionMap::new(),
         };
-        let plan = bench_plan(&variant, &context(), "0123456789abcdef0123456789abcdef")
-            .expect("plan");
+        let plan =
+            bench_plan(&variant, &context(), "0123456789abcdef0123456789abcdef").expect("plan");
 
         assert_eq!(plan.instance, BENCH_INSTANCE);
         assert_eq!(plan.data_port, BENCH_DATA_PORT);
@@ -707,8 +713,7 @@ mod tests {
             options: OptionMap::new(),
         };
         let ctx = context();
-        let plan = bench_plan(&variant, &ctx, "0123456789abcdef0123456789abcdef")
-            .expect("plan");
+        let plan = bench_plan(&variant, &ctx, "0123456789abcdef0123456789abcdef").expect("plan");
         assert_eq!(plan.forward_ports, vec![ctx.settings.measure_port]);
     }
 

@@ -5,11 +5,21 @@
 use std::sync::Arc;
 
 use super::candytunnel::CandyTunnelProvider;
+use super::copytunnel::CopyTunnelProvider;
+use super::hiddifycore::HiddifyCoreProvider;
+use super::hiddifyrelay::HiddifyRelayProvider;
+use super::htunnel::HTunnelProvider;
 use super::ProviderRef;
 
 /// Every registered provider, in the order the UI should offer them.
 pub fn all() -> Vec<ProviderRef> {
-    vec![Arc::new(CandyTunnelProvider::new()) as ProviderRef]
+    vec![
+        Arc::new(CandyTunnelProvider::new()) as ProviderRef,
+        Arc::new(CopyTunnelProvider::new()) as ProviderRef,
+        Arc::new(HTunnelProvider::new()) as ProviderRef,
+        Arc::new(HiddifyRelayProvider::new()) as ProviderRef,
+        Arc::new(HiddifyCoreProvider::new()) as ProviderRef,
+    ]
 }
 
 /// Look a provider up by its stable id.

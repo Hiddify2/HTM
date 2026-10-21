@@ -48,6 +48,10 @@ pub mod logical {
     /// The `openssl` command, used to generate the QUIC transport's
     /// self-signed certificate.
     pub const OPENSSL: &str = "openssl";
+    /// TCP relay used by one of the Hiddify Relay methods.
+    pub const SOCAT: &str = "socat";
+    /// TCP load balancer / forwarder used by one of the Hiddify Relay methods.
+    pub const HAPROXY: &str = "haproxy";
 }
 
 /// What every host needs before a tunnel can run.
@@ -133,6 +137,8 @@ pub fn concrete_packages(logical_name: &str, manager: PackageManager) -> Vec<&'s
         logical::PERL => vec!["perl"],
         logical::TAR => vec!["tar"],
         logical::OPENSSL => vec!["openssl"],
+        logical::SOCAT => vec!["socat"],
+        logical::HAPROXY => vec!["haproxy"],
         _ => vec![],
     }
 }
@@ -161,9 +167,7 @@ fn install_command(manager: PackageManager, packages: &[String]) -> Option<Strin
 /// The command that refreshes the package index, when the manager needs one.
 fn refresh_command(manager: PackageManager) -> Option<&'static str> {
     match manager {
-        PackageManager::Apt => {
-            Some("export DEBIAN_FRONTEND=noninteractive; apt-get update -qq")
-        }
+        PackageManager::Apt => Some("export DEBIAN_FRONTEND=noninteractive; apt-get update -qq"),
         PackageManager::Pacman => Some("pacman -Sy --noconfirm"),
         PackageManager::Apk => Some("apk update"),
         PackageManager::Zypper => Some("zypper --non-interactive refresh"),
@@ -256,11 +260,7 @@ pub fn install(
 
     if let Some(refresh) = refresh_command(manager) {
         reporter.check()?;
-        reporter.log_line(
-            LogLevel::Debug,
-            Some(scope),
-            "Refreshing the package index",
-        );
+        reporter.log_line(LogLevel::Debug, Some(scope), "Refreshing the package index");
         // A stale index is common and not always fatal, so a refresh failure is
         // a warning; the install below will surface anything that matters.
         client.set_command_timeout(300);
@@ -412,20 +412,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     );
 
     let mut last = String::new();
-    let status = client.run_script_stream(
-        &script,
-        true,
-        cancel,
-        Duration::from_secs(2400),
-        |line| {
+    let status =
+        client.run_script_stream(&script, true, cancel, Duration::from_secs(2400), |line| {
             let line = line.trim();
             if line.is_empty() {
                 return;
             }
             reporter.log_line(LogLevel::Debug, Some(scope), line);
             last = line.to_string();
-        },
-    )?;
+        })?;
 
     if status != 0 {
         return Err(Error::Remote {
@@ -473,8 +468,7 @@ mod tests {
 
     #[test]
     fn install_commands_are_non_interactive() {
-        let cmd =
-            install_command(PackageManager::Apt, &["curl".to_string()]).expect("a command");
+        let cmd = install_command(PackageManager::Apt, &["curl".to_string()]).expect("a command");
         assert!(cmd.contains("noninteractive"));
         assert!(cmd.contains("-y"));
         assert!(install_command(PackageManager::Unknown, &["curl".into()]).is_none());

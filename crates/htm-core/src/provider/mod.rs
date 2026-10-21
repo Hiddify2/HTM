@@ -16,6 +16,10 @@
 //! deployment flow and the systemd controls all work off the trait.
 
 pub mod candytunnel;
+pub mod copytunnel;
+pub mod hiddifycore;
+pub mod hiddifyrelay;
+pub mod htunnel;
 pub mod registry;
 
 use std::sync::atomic::AtomicBool;
@@ -30,6 +34,59 @@ use crate::model::{
     TunnelSide,
 };
 use crate::ssh::SshClient;
+
+/// The shape of tunnel a provider builds.
+///
+/// HTM began as a manager for point-to-point TUN tunnels, where the relay and
+/// the exit are joined by a `/30` TUN link and the authoritative test of a
+/// working tunnel is an ICMP echo across it. Not every tunnel works that way:
+/// some expose a local SOCKS5 proxy with no TUN device at all, and some are
+/// one-sided relays that forward ports to an upstream the relay never shares an
+/// interface with. The model tells the orchestrator which readiness test,
+/// which managed sides, and whether the TUN-based benchmark applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelModel {
+    /// A `/30` TUN link between relay and exit. Readiness is an ICMP echo
+    /// across it, and the throughput benchmark measures over it. CandyTunnel
+    /// and CopyTunnel's TUN mode.
+    PointToPointTun,
+    /// The relay exposes a local SOCKS5 proxy; there is no TUN link to ping.
+    /// Readiness is the proxy actually listening plus the units staying up.
+    /// HTunnel and CopyTunnel's transparent-proxy mode.
+    SocksProxy,
+    /// The relay forwards ports to an upstream destination. Only the relay is
+    /// managed (except where a method also sets up the far end); readiness is
+    /// the forwarder listening. The Hiddify Relay Builder methods.
+    RelayForward,
+}
+
+impl Default for TunnelModel {
+    fn default() -> Self {
+        TunnelModel::PointToPointTun
+    }
+}
+
+impl TunnelModel {
+    /// Does a working tunnel of this model carry traffic across a TUN link that
+    /// the relay can ping, and so measure with the throughput benchmark?
+    pub fn is_point_to_point_tun(self) -> bool {
+        matches!(self, TunnelModel::PointToPointTun)
+    }
+}
+
+/// A post-start check the orchestrator runs to confirm a non-TUN tunnel is
+/// actually working, since those have no TUN link to ping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadinessProbe {
+    /// A TCP port that should be accepting connections on the given side once
+    /// the tunnel is up, e.g. the relay's SOCKS5 listener or a forwarded port.
+    TcpPort { side: TunnelSide, port: u16 },
+    /// A UDP socket that should be bound on the given side, e.g. a relay's UDP
+    /// forward listener. Bound, not reachable: a UDP listener answers nothing
+    /// by itself.
+    UdpPort { side: TunnelSide, port: u16 },
+}
 
 /// How the provider's software should get onto a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +323,32 @@ pub trait TunnelProvider: Send + Sync {
 
     /// Instance names currently configured on a host.
     fn list_instances(&self, ctx: &HostCtx<'_>) -> Result<Vec<String>>;
+
+    /// The shape of tunnel this provider builds. Decides which readiness test
+    /// the orchestrator uses, which sides it manages, and whether the
+    /// TUN-based throughput benchmark applies. Defaults to the original
+    /// point-to-point TUN model, so existing providers need not override it.
+    fn model(&self) -> TunnelModel {
+        TunnelModel::PointToPointTun
+    }
+
+    /// The sides HTM actively installs and deploys software on for a given
+    /// configuration. Both by default. A relay-forward provider returns only
+    /// the relay, except where the chosen method also configures the far end.
+    ///
+    /// This governs install and deploy only; stopping and removing a unit is
+    /// idempotent and is applied to both sides regardless, so a leftover unit
+    /// is always cleaned up.
+    fn managed_sides(&self, _options: &OptionMap) -> Vec<TunnelSide> {
+        vec![TunnelSide::Server, TunnelSide::Client]
+    }
+
+    /// Post-start checks for a non-TUN tunnel, which has no TUN link to ping.
+    /// Empty means "rely on the units staying active and the ready markers".
+    /// Ignored for [`TunnelModel::PointToPointTun`], which pings the TUN link.
+    fn readiness_probes(&self, _plan: &TunnelPlan) -> Vec<ReadinessProbe> {
+        Vec::new()
+    }
 
     /// How to tell a started tunnel is working.
     fn readiness(&self) -> Readiness {
