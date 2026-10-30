@@ -82,6 +82,8 @@ sha256sum -c htm-linux-x86_64.sha256
 | ![Provider dropdown](docs/screenshots/providers.png) | ![Benchmark tab](docs/screenshots/benchmark.png) |
 | **Tunnel settings** — protocol and relay access mode | **Relay access mode** — SOCKS proxy · port forward · TUN |
 | ![Hiddify Core settings](docs/screenshots/wizard-settings.png) | ![Relay access mode](docs/screenshots/relay-access-mode.png) |
+| **Abuse alert** — shown when source-address forging is selected | |
+| ![IP-spoofing abuse alert](docs/screenshots/abuse-alert.png) | |
 
 ---
 
@@ -203,10 +205,17 @@ would make the two indistinguishable. Extra addresses become a rotation pool —
 and each server is configured to accept *every* address the other one was given,
 so rotation can never break the link.
 
-> **Both providers must allow forged source addresses to leave their network.**
-> Most do not. If either one filters, the tunnel will not carry a single packet.
-> Benchmark this mode before relying on it — that is exactly what the benchmark
-> is for.
+> **Abuse warning.** Forging source addresses that are not allocated to you is
+> IP spoofing: it is the basis of reflection and amplification attacks, it is
+> illegal in many jurisdictions, and it breaches almost every hosting provider's
+> terms — your servers can be suspended or terminated for it. Only use addresses
+> you are authorised to send from, such as ranges your own organisation holds.
+> HTM shows this warning in the wizard whenever this mode is selected.
+>
+> **Both providers must also allow forged source addresses to leave their
+> network.** Most do not. If either one filters, the tunnel will not carry a
+> single packet. Benchmark this mode before relying on it — that is exactly what
+> the benchmark is for.
 
 ---
 
