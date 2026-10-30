@@ -349,6 +349,22 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
     }
 
     if app.wizard.spoofing.is_forged() {
+        // Abuse alert, shown before the address field so it is read first.
+        // Forging addresses that are not yours is IP spoofing, and this says so
+        // plainly rather than letting the feature look routine.
+        ui.add_space(SPACE_S);
+        widgets::notice(
+            ui,
+            &palette,
+            LogLevel::Error,
+            "Abuse warning: forging source addresses that are not allocated to you is IP spoofing. \
+             It is the basis of reflection and amplification attacks, it is illegal in many \
+             jurisdictions, and it breaches almost every hosting provider's terms — your servers \
+             can be suspended or terminated for it. Only enter addresses you are authorised to \
+             send from, such as ranges your own organisation holds, and only where both providers \
+             permit it.",
+        );
+
         ui.add_space(SPACE_S);
         widgets::form_row(ui, &palette, "ADDRESS LIST", LABEL_W, |ui| {
             widgets::text_field(
