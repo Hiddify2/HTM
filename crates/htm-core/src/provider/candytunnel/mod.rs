@@ -1,6 +1,6 @@
 //! The CandyTunnel provider.
 //!
-//! CandyTunnel is an IP-spoofing tunnel for heavily filtered networks. It
+//! CandyTunnel is an IP-faking tunnel for heavily filtered networks. It
 //! forges source addresses in both directions and offers seven transports,
 //! ChaCha20 encryption, frame multiplexing, XOR forward error correction and
 //! several inspection-evasion tricks.
@@ -56,7 +56,7 @@ impl TunnelProvider for CandyTunnelProvider {
     }
 
     fn description(&self) -> &'static str {
-        "Bidirectional IP-spoofing tunnel with seven transports, ChaCha20 encryption, frame \
+        "Bidirectional IP-faking tunnel with seven transports, ChaCha20 encryption, frame \
          multiplexing, XOR error correction and inspection-evasion options."
     }
 
@@ -272,7 +272,7 @@ exit 0
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EndpointPlan, SpoofPlan};
+    use crate::model::{EndpointPlan, FakePlan};
 
     fn plan() -> TunnelPlan {
         TunnelPlan {
@@ -284,7 +284,7 @@ mod tests {
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
                 tun_ip: "10.54.21.2".into(),
-                spoofed_ip: "192.0.2.10".into(),
+                faked_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -292,7 +292,7 @@ mod tests {
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
                 tun_ip: "10.54.21.1".into(),
-                spoofed_ip: "198.51.100.5".into(),
+                faked_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "candy0".into(),
@@ -302,7 +302,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: config::option_space().defaults(),
         }
     }

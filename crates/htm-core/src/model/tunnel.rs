@@ -25,8 +25,8 @@ pub struct EndpointPlan {
     /// This side's address on the point-to-point TUN link.
     pub tun_ip: String,
     /// The forged source address this side stamps on outgoing packets. Equal
-    /// to `real_ip` when spoofing is disabled.
-    pub spoofed_ip: String,
+    /// to `real_ip` when faking is disabled.
+    pub faked_ip: String,
 }
 
 impl EndpointPlan {
@@ -43,7 +43,7 @@ impl EndpointPlan {
 /// How each side fills in the source address of the packets it sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SpoofMode {
+pub enum FakeMode {
     /// Each server sends packets from its own real address.
     ///
     /// This is what works on ordinary VPS hosting, because providers apply
@@ -58,22 +58,22 @@ pub enum SpoofMode {
     Forged,
 }
 
-impl SpoofMode {
+impl FakeMode {
     pub fn display_name(self) -> &'static str {
         match self {
-            SpoofMode::Original => "Use the servers' own addresses",
-            SpoofMode::Forged => "Forge source addresses from a list",
+            FakeMode::Original => "Use the servers' own addresses",
+            FakeMode::Forged => "Forge source addresses from a list",
         }
     }
 
     pub fn help(self) -> &'static str {
         match self {
-            SpoofMode::Original => {
+            FakeMode::Original => {
                 "Each server sends from its real address. This is the mode that works on \
                  ordinary VPS hosting, and it is the right choice unless you have specifically \
                  confirmed your providers do not filter outgoing source addresses."
             }
-            SpoofMode::Forged => {
+            FakeMode::Forged => {
                 "Each server stamps an address from your list onto every packet it sends, and \
                  accepts the addresses the other side was given. Both providers must allow \
                  forged source addresses to leave their network, which most do not."
@@ -81,41 +81,41 @@ impl SpoofMode {
         }
     }
 
-    pub const ALL: [SpoofMode; 2] = [SpoofMode::Original, SpoofMode::Forged];
+    pub const ALL: [FakeMode; 2] = [FakeMode::Original, FakeMode::Forged];
 }
 
 /// Source-address settings for a tunnel.
 ///
-/// In [`SpoofMode::Forged`] the two sides must never claim the same address:
+/// In [`FakeMode::Forged`] the two sides must never claim the same address:
 /// each end identifies its peer partly by the source address it sees, so a
 /// shared address makes the two indistinguishable. The pools are therefore
-/// kept separate, and [`SpoofPlan::from_list`] splits a single user-supplied
+/// kept separate, and [`FakePlan::from_list`] splits a single user-supplied
 /// list between them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpoofPlan {
-    pub mode: SpoofMode,
-    /// Addresses the relay may send from. Empty in [`SpoofMode::Original`].
+pub struct FakePlan {
+    pub mode: FakeMode,
+    /// Addresses the relay may send from. Empty in [`FakeMode::Original`].
     #[serde(default)]
     pub client_pool: Vec<String>,
-    /// Addresses the exit may send from. Empty in [`SpoofMode::Original`].
+    /// Addresses the exit may send from. Empty in [`FakeMode::Original`].
     #[serde(default)]
     pub server_pool: Vec<String>,
 }
 
-impl Default for SpoofPlan {
+impl Default for FakePlan {
     fn default() -> Self {
         Self {
-            mode: SpoofMode::Original,
+            mode: FakeMode::Original,
             client_pool: Vec::new(),
             server_pool: Vec::new(),
         }
     }
 }
 
-impl SpoofPlan {
+impl FakePlan {
     /// True when source addresses are being forged.
     pub fn is_forged(&self) -> bool {
-        self.mode == SpoofMode::Forged
+        self.mode == FakeMode::Forged
     }
 
     /// Split one list of addresses between the two sides.
@@ -135,7 +135,7 @@ impl SpoofPlan {
             }
         }
         Self {
-            mode: SpoofMode::Forged,
+            mode: FakeMode::Forged,
             client_pool,
             server_pool,
         }
@@ -242,7 +242,7 @@ pub struct TunnelPlan {
     pub log_level: String,
 
     #[serde(default)]
-    pub spoofing: SpoofPlan,
+    pub faking: FakePlan,
     /// Provider-specific settings.
     #[serde(default)]
     pub options: OptionMap,
@@ -296,7 +296,7 @@ impl TunnelPlan {
             for (what, value) in [
                 ("real IP", &ep.real_ip),
                 ("TUN IP", &ep.tun_ip),
-                ("spoofed IP", &ep.spoofed_ip),
+                ("faked IP", &ep.faked_ip),
             ] {
                 if !is_ipv4(value) {
                     return Err(format!("{who}: {what} '{value}' is not a valid IPv4 address."));
@@ -324,8 +324,8 @@ impl TunnelPlan {
                     .into(),
             );
         }
-        self.spoofing.validate()?;
-        if self.spoofing.is_forged() && self.client.spoofed_ip == self.server.spoofed_ip {
+        self.faking.validate()?;
+        if self.faking.is_forged() && self.client.faked_ip == self.server.faked_ip {
             return Err(
                 "Both servers were given the same forged source address. Each needs its own."
                     .into(),

@@ -230,7 +230,7 @@ impl TunnelProvider for CopyTunnelProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EndpointPlan, OptionMapExt, SpoofPlan};
+    use crate::model::{EndpointPlan, OptionMapExt, FakePlan};
     use crate::provider::TunnelModel;
 
     fn plan() -> TunnelPlan {
@@ -243,7 +243,7 @@ mod tests {
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
                 tun_ip: "10.66.0.2".into(),
-                spoofed_ip: "192.0.2.10".into(),
+                faked_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -251,7 +251,7 @@ mod tests {
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
                 tun_ip: "10.66.0.1".into(),
-                spoofed_ip: "198.51.100.5".into(),
+                faked_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "copy0".into(),
@@ -261,7 +261,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: config::option_space().defaults(),
         }
     }
@@ -328,9 +328,9 @@ mod tests {
     fn a_forged_plan_is_refused_before_anything_is_uploaded() {
         let p = CopyTunnelProvider::new();
         let mut bad = plan();
-        bad.spoofing = SpoofPlan::from_list(&["8.8.8.8".into(), "1.1.1.1".into()]);
-        bad.client.spoofed_ip = "8.8.8.8".into();
-        bad.server.spoofed_ip = "1.1.1.1".into();
+        bad.faking = FakePlan::from_list(&["8.8.8.8".into(), "1.1.1.1".into()]);
+        bad.client.faked_ip = "8.8.8.8".into();
+        bad.server.faked_ip = "1.1.1.1".into();
         assert!(p.render(&bad, TunnelSide::Client).is_err());
     }
 

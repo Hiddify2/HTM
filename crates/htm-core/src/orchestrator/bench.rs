@@ -21,7 +21,7 @@ use crate::error::{Error, Result};
 use crate::jobs::{JobPayload, LogLevel, Reporter};
 use crate::model::{
     score_results, BenchMetrics, BenchOutcome, BenchResult, BenchRun, BenchSettings, BenchVariant,
-    MatrixSelection, ServerProfile, SpoofPlan, TunSlot, TunnelPlan, TunnelSide,
+    MatrixSelection, ServerProfile, FakePlan, TunSlot, TunnelPlan, TunnelSide,
 };
 use crate::provider::ProviderRef;
 use crate::remote::net::{self, Backend};
@@ -283,7 +283,7 @@ fn bench_plan(
     // `warn` keeps the journal readable while still showing real problems;
     // `debug` on a fast link produces enough output to affect the result.
     inputs.log_level = "warn".to_string();
-    inputs.spoofing = SpoofPlan::default();
+    inputs.faking = FakePlan::default();
 
     // Auto-tune assigns over `enable_multiplex`, `multiplex_flush_ms` and
     // `tunnel_count` inside CandyTunnel before the tunnel starts. Those are

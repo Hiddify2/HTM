@@ -490,10 +490,10 @@ fn details(ui: &mut Ui, palette: &Palette, instance: &TunnelInstance) {
             ui,
             palette,
             "SOURCE ADDRESSES",
-            &if instance.plan.spoofing.is_forged() {
+            &if instance.plan.faking.is_forged() {
                 format!(
                     "forged · relay {} · exit {}",
-                    instance.plan.client.spoofed_ip, instance.plan.server.spoofed_ip
+                    instance.plan.client.faked_ip, instance.plan.server.faked_ip
                 )
             } else {
                 "the servers' own".to_string()

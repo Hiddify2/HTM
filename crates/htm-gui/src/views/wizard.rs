@@ -8,7 +8,7 @@
 use egui::{Context, RichText, Ui};
 
 use htm_core::jobs::{JobKind, LogLevel};
-use htm_core::model::{OptValue, OptionKind, SpoofMode};
+use htm_core::model::{OptValue, OptionKind, FakeMode};
 use htm_core::util;
 
 use crate::app::{Action, HtmApp};
@@ -279,10 +279,10 @@ fn body(app: &mut HtmApp, ui: &mut Ui, close: &mut bool) {
 ///
 /// Presented as two labelled cards rather than a checkbox, because they are a
 /// genuine either-or with very different consequences, and because a checkbox
-/// called "spoof" tells a reader nothing about which one they want.
+/// called "fake" tells a reader nothing about which one they want.
 fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
     let palette = app.palette;
-    let current = app.wizard.spoofing.mode;
+    let current = app.wizard.faking.mode;
     let mut chosen = current;
 
     widgets::section_title(ui, &palette, "Source addresses");
@@ -294,7 +294,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
     ui.add_space(SPACE_S);
 
     ui.columns(2, |cols| {
-        for (index, mode) in SpoofMode::ALL.into_iter().enumerate() {
+        for (index, mode) in FakeMode::ALL.into_iter().enumerate() {
             let ui = &mut cols[index];
             let selected = current == mode;
             let accent = if selected {
@@ -328,7 +328,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
                                 .color(palette.text)
                                 .strong(),
                         );
-                        if mode == SpoofMode::Original {
+                        if mode == FakeMode::Original {
                             widgets::pill(ui, &palette, "recommended", palette.success);
                         }
                     });
@@ -345,19 +345,19 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
     });
 
     if chosen != current {
-        app.wizard.spoofing.mode = chosen;
+        app.wizard.faking.mode = chosen;
     }
 
-    if app.wizard.spoofing.is_forged() {
+    if app.wizard.faking.is_forged() {
         // Abuse alert, shown before the address field so it is read first.
-        // Forging addresses that are not yours is IP spoofing, and this says so
+        // Forging addresses that are not yours is IP faking, and this says so
         // plainly rather than letting the feature look routine.
         ui.add_space(SPACE_S);
         widgets::notice(
             ui,
             &palette,
             LogLevel::Error,
-            "Abuse warning: forging source addresses that are not allocated to you is IP spoofing. \
+            "Abuse warning: forging source addresses that are not allocated to you is IP faking. \
              It is the basis of reflection and amplification attacks, it is illegal in many \
              jurisdictions, and it breaches almost every hosting provider's terms — your servers \
              can be suspended or terminated for it. Only enter addresses you are authorised to \
@@ -369,7 +369,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
         widgets::form_row(ui, &palette, "ADDRESS LIST", LABEL_W, |ui| {
             widgets::text_field(
                 ui,
-                &mut app.wizard.spoof_pool_text,
+                &mut app.wizard.fake_pool_text,
                 340.0,
                 "8.8.8.8, 1.1.1.1, 9.9.9.9, 208.67.222.222",
             );
@@ -378,7 +378,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
         // Show the split immediately: which address each server will claim is
         // the thing most likely to surprise someone, so it should never have to
         // be guessed.
-        let addresses = crate::app::parse_address_list(&app.wizard.spoof_pool_text);
+        let addresses = crate::app::parse_address_list(&app.wizard.fake_pool_text);
         if addresses.is_empty() {
             widgets::hint(
                 ui,
@@ -387,7 +387,7 @@ fn source_addresses(app: &mut HtmApp, ui: &mut Ui) {
                  its own; extra addresses are rotated between sessions.",
             );
         } else {
-            let plan = htm_core::model::SpoofPlan::from_list(&addresses);
+            let plan = htm_core::model::FakePlan::from_list(&addresses);
             match plan.validate() {
                 Ok(()) => {
                     widgets::inset(ui, &palette, |ui| {

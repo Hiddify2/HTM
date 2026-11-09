@@ -19,7 +19,7 @@ use htm_core::jobs::{
     self, JobEvent, JobHandle, JobKind, JobOutcome, JobPayload, LogLevel, LogLine, Reporter,
 };
 use htm_core::model::{
-    ServerCredentials, ServerSecrets, ServiceAction, SpoofPlan, TunSlot, TunnelInstance,
+    ServerCredentials, ServerSecrets, ServiceAction, FakePlan, TunSlot, TunnelInstance,
     TunnelSide,
 };
 use htm_core::orchestrator::{self, bench as bench_engine, PlanInputs};
@@ -1340,8 +1340,8 @@ impl HtmApp {
         // The two source-address modes. In forged mode the single list the
         // user typed is split between the two servers, because each side has
         // to claim addresses the other does not.
-        let spoofing = if self.wizard.spoofing.is_forged() {
-            let addresses = parse_address_list(&self.wizard.spoof_pool_text);
+        let faking = if self.wizard.faking.is_forged() {
+            let addresses = parse_address_list(&self.wizard.fake_pool_text);
             if addresses.is_empty() {
                 return Err(
                     "Forged mode is selected but no addresses were given. Enter at least two, \
@@ -1349,11 +1349,11 @@ impl HtmApp {
                         .to_string(),
                 );
             }
-            let plan = SpoofPlan::from_list(&addresses);
+            let plan = FakePlan::from_list(&addresses);
             plan.validate()?;
             plan
         } else {
-            SpoofPlan::default()
+            FakePlan::default()
         };
 
         self.provider.validate_options(&self.wizard.options)?;
@@ -1374,7 +1374,7 @@ impl HtmApp {
         inputs.mtu = self.wizard.mtu;
         inputs.tun_mtu = self.wizard.mtu;
         inputs.log_level = self.wizard.log_level.clone();
-        inputs.spoofing = spoofing;
+        inputs.faking = faking;
 
         Ok(inputs)
     }

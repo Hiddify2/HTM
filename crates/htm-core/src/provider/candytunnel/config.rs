@@ -816,9 +816,9 @@ pub fn render_toml(plan: &TunnelPlan, side: TunnelSide) -> String {
     // accept every address the *other* side was given — otherwise a packet
     // sent from a rotated address arrives from somewhere the receiver does not
     // recognise and is dropped.
-    let (spoof_pool, allowed_peers) = if plan.spoofing.is_forged() {
-        let own = plan.spoofing.pool_for(side);
-        let peer_pool = plan.spoofing.pool_for(side.peer());
+    let (fake_pool, allowed_peers) = if plan.faking.is_forged() {
+        let own = plan.faking.pool_for(side);
+        let peer_pool = plan.faking.pool_for(side.peer());
         (
             // A single address needs no rotation list, and leaving it empty
             // keeps the generated file readable.
@@ -861,14 +861,14 @@ pub fn render_toml(plan: &TunnelPlan, side: TunnelSide) -> String {
     ));
     s.push_str(&format!(
         "spoofed_ip      = {}\n",
-        toml_string(&me.spoofed_ip)
+        toml_string(&me.faked_ip)
     ));
     s.push_str(&format!(
         "peer_spoofed_ip = {}\n",
-        toml_string(&peer.spoofed_ip)
+        toml_string(&peer.faked_ip)
     ));
-    s.push_str(&format!("spoofed_ip_pool = {spoof_pool}\n"));
-    // CandyTunnel trusts the peer's real address and its primary spoofed
+    s.push_str(&format!("spoofed_ip_pool = {fake_pool}\n"));
+    // CandyTunnel trusts the peer's real address and its primary faked
     // address implicitly. This list adds the rest of the peer's rotation pool.
     s.push_str(&format!("allowed_peers = {allowed_peers}\n\n"));
 
@@ -1114,7 +1114,7 @@ pub fn validate_plan(plan: &TunnelPlan) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EndpointPlan, SpoofPlan};
+    use crate::model::{EndpointPlan, FakePlan};
 
     fn plan() -> TunnelPlan {
         TunnelPlan {
@@ -1126,7 +1126,7 @@ mod tests {
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
                 tun_ip: "10.54.21.2".into(),
-                spoofed_ip: "192.0.2.10".into(),
+                faked_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -1134,7 +1134,7 @@ mod tests {
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
                 tun_ip: "10.54.21.1".into(),
-                spoofed_ip: "198.51.100.5".into(),
+                faked_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "candy0".into(),
@@ -1144,7 +1144,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: option_space().defaults(),
         }
     }
@@ -1299,7 +1299,7 @@ mod tests {
     #[test]
     fn original_mode_uses_each_servers_own_address() {
         let p = plan();
-        assert!(!p.spoofing.is_forged());
+        assert!(!p.faking.is_forged());
         let client = render_toml(&p, TunnelSide::Client);
         let server = render_toml(&p, TunnelSide::Server);
 
@@ -1314,18 +1314,18 @@ mod tests {
 
     #[test]
     fn forged_mode_gives_each_side_its_own_addresses() {
-        use crate::model::SpoofPlan;
+        use crate::model::FakePlan;
 
         let mut p = plan();
-        p.spoofing = SpoofPlan::from_list(&[
+        p.faking = FakePlan::from_list(&[
             "8.8.8.8".to_string(),
             "1.1.1.1".to_string(),
             "9.9.9.9".to_string(),
             "208.67.222.222".to_string(),
         ]);
         // build_plan normally does this; do it by hand for the unit test.
-        p.client.spoofed_ip = p.spoofing.client_pool[0].clone();
-        p.server.spoofed_ip = p.spoofing.server_pool[0].clone();
+        p.client.faked_ip = p.faking.client_pool[0].clone();
+        p.server.faked_ip = p.faking.server_pool[0].clone();
         assert!(validate_plan(&p).is_ok());
 
         let client = render_toml(&p, TunnelSide::Client);
@@ -1345,12 +1345,12 @@ mod tests {
 
     #[test]
     fn a_single_forged_address_per_side_needs_no_rotation_list() {
-        use crate::model::SpoofPlan;
+        use crate::model::FakePlan;
 
         let mut p = plan();
-        p.spoofing = SpoofPlan::from_list(&["8.8.8.8".to_string(), "1.1.1.1".to_string()]);
-        p.client.spoofed_ip = "8.8.8.8".into();
-        p.server.spoofed_ip = "1.1.1.1".into();
+        p.faking = FakePlan::from_list(&["8.8.8.8".to_string(), "1.1.1.1".to_string()]);
+        p.client.faked_ip = "8.8.8.8".into();
+        p.server.faked_ip = "1.1.1.1".into();
 
         let client = render_toml(&p, TunnelSide::Client);
         assert!(client.contains("spoofed_ip_pool = []"));
@@ -1359,22 +1359,22 @@ mod tests {
 
     #[test]
     fn forged_mode_rejects_one_address_and_duplicates() {
-        use crate::model::{SpoofMode, SpoofPlan};
+        use crate::model::{FakeMode, FakePlan};
 
         // One address leaves a side with nothing to send from.
-        assert!(SpoofPlan::from_list(&["8.8.8.8".to_string()])
+        assert!(FakePlan::from_list(&["8.8.8.8".to_string()])
             .validate()
             .is_err());
 
         // The same address on both sides makes the two indistinguishable.
-        let clashing = SpoofPlan {
-            mode: SpoofMode::Forged,
+        let clashing = FakePlan {
+            mode: FakeMode::Forged,
             client_pool: vec!["8.8.8.8".to_string()],
             server_pool: vec!["8.8.8.8".to_string()],
         };
         assert!(clashing.validate().is_err());
 
-        assert!(SpoofPlan::from_list(&["8.8.8.8".to_string(), "not-an-ip".to_string()])
+        assert!(FakePlan::from_list(&["8.8.8.8".to_string(), "not-an-ip".to_string()])
             .validate()
             .is_err());
     }

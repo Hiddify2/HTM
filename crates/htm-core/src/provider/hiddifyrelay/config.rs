@@ -647,7 +647,7 @@ fn socat_script(ports: &[u16], upstream: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EndpointPlan, OptValue, SpoofPlan};
+    use crate::model::{EndpointPlan, OptValue, FakePlan};
 
     fn plan() -> TunnelPlan {
         TunnelPlan {
@@ -659,7 +659,7 @@ mod tests {
                 real_ip: "198.51.100.1".into(),
                 public_ip: "198.51.100.1".into(),
                 tun_ip: "10.66.0.2".into(),
-                spoofed_ip: "198.51.100.1".into(),
+                faked_ip: "198.51.100.1".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -667,7 +667,7 @@ mod tests {
                 real_ip: "203.0.113.9".into(),
                 public_ip: "203.0.113.9".into(),
                 tun_ip: "10.66.0.1".into(),
-                spoofed_ip: "203.0.113.9".into(),
+                faked_ip: "203.0.113.9".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "rel0".into(),
@@ -677,7 +677,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: option_space().defaults(),
         }
     }

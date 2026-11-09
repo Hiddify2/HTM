@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use htm_core::model::{
-    BenchRun, MatrixSelection, OptionMap, ServerSecrets, SpoofPlan, TunnelSide, TunnelStatus,
+    BenchRun, MatrixSelection, OptionMap, ServerSecrets, FakePlan, TunnelSide, TunnelStatus,
 };
 use htm_core::provider::InstalledVersion;
 
@@ -275,8 +275,8 @@ pub struct WizardUi {
     pub pre_shared_key: String,
     pub log_level: String,
     pub start_on_boot: bool,
-    pub spoofing: SpoofPlan,
-    pub spoof_pool_text: String,
+    pub faking: FakePlan,
+    pub fake_pool_text: String,
     pub options: OptionMap,
     /// Variant this was seeded from, when it came from benchmark results.
     pub source_variant: Option<String>,
@@ -299,8 +299,8 @@ impl Default for WizardUi {
             pre_shared_key: String::new(),
             log_level: "info".to_string(),
             start_on_boot: true,
-            spoofing: SpoofPlan::default(),
-            spoof_pool_text: String::new(),
+            faking: FakePlan::default(),
+            fake_pool_text: String::new(),
             options: OptionMap::new(),
             source_variant: None,
             expected_up: None,

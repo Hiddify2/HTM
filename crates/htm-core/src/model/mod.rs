@@ -16,6 +16,6 @@ pub use server::{
     ServerFacts, ServerProfile, ServerSecrets, TunnelSide,
 };
 pub use tunnel::{
-    is_ipv4, EndpointPlan, Health, IfaceStats, ServiceAction, ServiceStatus, SpoofMode,
-    SpoofPlan, TunSlot, TunnelInstance, TunnelPlan, TunnelStatus,
+    is_ipv4, EndpointPlan, Health, IfaceStats, ServiceAction, ServiceStatus, FakeMode,
+    FakePlan, TunSlot, TunnelInstance, TunnelPlan, TunnelStatus,
 };
