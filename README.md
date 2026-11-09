@@ -83,7 +83,7 @@ sha256sum -c htm-linux-x86_64.sha256
 | **Tunnel settings** — protocol and relay access mode | **Relay access mode** — SOCKS proxy · port forward · TUN |
 | ![Hiddify Core settings](docs/screenshots/wizard-settings.png) | ![Relay access mode](docs/screenshots/relay-access-mode.png) |
 | **Abuse alert** — shown when source-address forging is selected | |
-| ![IP-spoofing abuse alert](docs/screenshots/abuse-alert.png) | |
+| ![IP-faking abuse alert](docs/screenshots/abuse-alert.png) | |
 
 ---
 
@@ -181,7 +181,7 @@ belong to the customer, so anything else simply never arrives.
 **Choose this unless you have specifically confirmed otherwise.** It is the
 default.
 
-### Spoof — forge source addresses from a list
+### Fake — forge source addresses from a list
 
 You give HTM a list of IPv4 addresses. Each server stamps one of them onto every
 packet it sends, so the traffic appears to come from somewhere else entirely —
@@ -206,7 +206,7 @@ and each server is configured to accept *every* address the other one was given,
 so rotation can never break the link.
 
 > **Abuse warning.** Forging source addresses that are not allocated to you is
-> IP spoofing: it is the basis of reflection and amplification attacks, it is
+> IP faking: it is the basis of reflection and amplification attacks, it is
 > illegal in many jurisdictions, and it breaches almost every hosting provider's
 > terms — your servers can be suspended or terminated for it. Only use addresses
 > you are authorised to send from, such as ranges your own organisation holds.
@@ -359,7 +359,7 @@ after N failures* in the measurement settings so a hopeless run gives up early
 instead of spending an hour proving the same point.
 
 **The tunnel starts but carries nothing.**
-Open the Logs tab and read the relay's journal. If you are using the spoof mode,
+Open the Logs tab and read the relay's journal. If you are using the fake mode,
 try the normal mode first — a provider that filters forged source addresses
 produces exactly this symptom.
 
@@ -377,7 +377,7 @@ applies) benchmark it:
 
 | Provider | Model | What it is | Benchmark sweeps |
 |----------|-------|------------|------------------|
-| **CandyTunnel** | point-to-point TUN | IP-spoofing TUN tunnel, seven transports | transports, mux, FEC, … |
+| **CandyTunnel** | point-to-point TUN | IP-faking TUN tunnel, seven transports | transports, mux, FEC, … |
 | **CopyTunnel** | point-to-point TUN | Encrypted layer-3 TUN tunnel over UDP, six ciphers | ciphers, obfuscation |
 | **HTunnel** | SOCKS proxy | Local SOCKS5 proxy with fake-source-UDP downlink | parallel tunnels |
 | **Hiddify Core** | SOCKS proxy | sing-box multi-protocol tunnel (SS, VMess, VLESS, Trojan, Hysteria2, TUIC, SOCKS); SOCKS proxy, port forward or full TUN on the relay | protocols |

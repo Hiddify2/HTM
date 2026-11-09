@@ -14,7 +14,7 @@
 //! See <https://github.com/Hiddify2/CopyTunnel>.
 
 use crate::model::{
-    is_ipv4, OptValue, OptionKind, OptionMap, OptionMapExt, OptionSpace, OptionSpec, SpoofMode,
+    is_ipv4, OptValue, OptionKind, OptionMap, OptionMapExt, OptionSpace, OptionSpec, FakeMode,
     TunnelPlan, TunnelSide,
 };
 
@@ -451,7 +451,7 @@ pub fn validate_plan(plan: &TunnelPlan) -> Result<(), String> {
 
     // CopyTunnel sends from each host's real address and has no field for a
     // forged source, so the forged-address mode cannot be honoured here.
-    if plan.spoofing.mode == SpoofMode::Forged {
+    if plan.faking.mode == FakeMode::Forged {
         return Err(
             "CopyTunnel sends from each server's own address and cannot forge source addresses. \
              Use the normal source-address mode, or pick a provider that supports forging."
@@ -474,7 +474,7 @@ pub fn validate_plan(plan: &TunnelPlan) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EndpointPlan, SpoofPlan};
+    use crate::model::{EndpointPlan, FakePlan};
 
     fn plan() -> TunnelPlan {
         TunnelPlan {
@@ -486,7 +486,7 @@ mod tests {
                 real_ip: "192.0.2.10".into(),
                 public_ip: "192.0.2.10".into(),
                 tun_ip: "10.66.0.2".into(),
-                spoofed_ip: "192.0.2.10".into(),
+                faked_ip: "192.0.2.10".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -494,7 +494,7 @@ mod tests {
                 real_ip: "198.51.100.5".into(),
                 public_ip: "198.51.100.5".into(),
                 tun_ip: "10.66.0.1".into(),
-                spoofed_ip: "198.51.100.5".into(),
+                faked_ip: "198.51.100.5".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "copy0".into(),
@@ -504,7 +504,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: option_space().defaults(),
         }
     }
@@ -596,9 +596,9 @@ mod tests {
     #[test]
     fn forged_source_addresses_are_refused() {
         let mut p = plan();
-        p.spoofing = SpoofPlan::from_list(&["8.8.8.8".into(), "1.1.1.1".into()]);
-        p.client.spoofed_ip = "8.8.8.8".into();
-        p.server.spoofed_ip = "1.1.1.1".into();
+        p.faking = FakePlan::from_list(&["8.8.8.8".into(), "1.1.1.1".into()]);
+        p.client.faked_ip = "8.8.8.8".into();
+        p.server.faked_ip = "1.1.1.1".into();
         assert!(validate_plan(&p).is_err());
     }
 

@@ -141,8 +141,8 @@ pub fn socks_port(plan: &TunnelPlan) -> u16 {
 /// normal mode the exit sends from its own address, which keeps the tunnel
 /// working on a provider that filters forged sources.
 fn exit_fake_pool(plan: &TunnelPlan) -> Vec<String> {
-    if plan.spoofing.is_forged() {
-        let pool = plan.spoofing.pool_for(TunnelSide::Server);
+    if plan.faking.is_forged() {
+        let pool = plan.faking.pool_for(TunnelSide::Server);
         if !pool.is_empty() {
             return pool.to_vec();
         }
@@ -343,7 +343,7 @@ pub fn validate_plan(plan: &TunnelPlan) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{is_ipv4, EndpointPlan, SpoofPlan};
+    use crate::model::{is_ipv4, EndpointPlan, FakePlan};
 
     fn plan() -> TunnelPlan {
         TunnelPlan {
@@ -355,7 +355,7 @@ mod tests {
                 real_ip: "198.51.100.1".into(),
                 public_ip: "198.51.100.1".into(),
                 tun_ip: "10.66.0.2".into(),
-                spoofed_ip: "198.51.100.1".into(),
+                faked_ip: "198.51.100.1".into(),
             },
             server: EndpointPlan {
                 side: TunnelSide::Server,
@@ -363,7 +363,7 @@ mod tests {
                 real_ip: "203.0.113.1".into(),
                 public_ip: "203.0.113.1".into(),
                 tun_ip: "10.66.0.1".into(),
-                spoofed_ip: "203.0.113.1".into(),
+                faked_ip: "203.0.113.1".into(),
             },
             tun_netmask: "255.255.255.252".into(),
             tun_name: "htun0".into(),
@@ -373,7 +373,7 @@ mod tests {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".into(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options: option_space().defaults(),
         }
     }
@@ -405,13 +405,13 @@ mod tests {
     #[test]
     fn forged_mode_fills_the_fake_pool_from_the_exits_half() {
         let mut p = plan();
-        p.spoofing = SpoofPlan::from_list(&[
+        p.faking = FakePlan::from_list(&[
             "8.8.8.8".into(),
             "1.1.1.1".into(),
             "9.9.9.9".into(),
             "208.67.222.222".into(),
         ]);
-        p.server.spoofed_ip = p.spoofing.server_pool[0].clone();
+        p.server.faked_ip = p.faking.server_pool[0].clone();
         let server = parse(&render_json(&p, TunnelSide::Server));
         // Exit's half is entries 1 and 3.
         assert_eq!(server["faked_ip"], "1.1.1.1");

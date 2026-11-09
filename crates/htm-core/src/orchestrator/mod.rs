@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::jobs::{JobPayload, LogLevel, Reporter};
 use crate::model::{
     OptionMap, ServerCredentials, ServerFacts, ServerProfile, ServiceAction, ServiceStatus,
-    SpoofPlan, TunSlot, TunnelInstance, TunnelPlan, TunnelSide, TunnelStatus,
+    FakePlan, TunSlot, TunnelInstance, TunnelPlan, TunnelSide, TunnelStatus,
 };
 use crate::provider::{HostCtx, InstallMethod, InstalledVersion, ProviderRef, ReadinessProbe};
 use crate::remote::{diagnostics, facts, net, pkg, systemd};
@@ -286,7 +286,7 @@ pub struct PlanInputs {
     pub mtu: u32,
     pub tun_mtu: u32,
     pub log_level: String,
-    pub spoofing: SpoofPlan,
+    pub faking: FakePlan,
     pub options: OptionMap,
 }
 
@@ -312,7 +312,7 @@ impl PlanInputs {
             mtu: 1380,
             tun_mtu: 1380,
             log_level: "info".to_string(),
-            spoofing: SpoofPlan::default(),
+            faking: FakePlan::default(),
             options,
         }
     }
@@ -329,7 +329,7 @@ pub fn build_plan(inputs: &PlanInputs) -> Result<TunnelPlan> {
 
     // Catch an unusable address list before any of the per-side work, so the
     // message names the real problem rather than a symptom of it.
-    inputs.spoofing.validate().map_err(Error::Validation)?;
+    inputs.faking.validate().map_err(Error::Validation)?;
 
     let mut endpoints = Vec::new();
     for (side, profile) in [
@@ -359,8 +359,8 @@ pub fn build_plan(inputs: &PlanInputs) -> Result<TunnelPlan> {
         // what works on providers that filter forged source addresses. In
         // Forged mode it takes the first address from its own half of the
         // list; the rest of that half becomes its rotation pool.
-        let spoofed_ip = match inputs.spoofing.primary_for(side) {
-            Some(address) if inputs.spoofing.is_forged() => address.clone(),
+        let faked_ip = match inputs.faking.primary_for(side) {
+            Some(address) if inputs.faking.is_forged() => address.clone(),
             _ => real_ip.clone(),
         };
 
@@ -370,7 +370,7 @@ pub fn build_plan(inputs: &PlanInputs) -> Result<TunnelPlan> {
             real_ip,
             public_ip,
             tun_ip: inputs.tun_slot.ip_for(side),
-            spoofed_ip,
+            faked_ip,
         });
     }
 
@@ -387,7 +387,7 @@ pub fn build_plan(inputs: &PlanInputs) -> Result<TunnelPlan> {
         mtu: inputs.mtu,
         tun_mtu: inputs.tun_mtu.min(inputs.mtu),
         log_level: inputs.log_level.clone(),
-        spoofing: inputs.spoofing.clone(),
+        faking: inputs.faking.clone(),
         options: inputs.options.clone(),
     };
 
@@ -1175,9 +1175,9 @@ mod tests {
         assert_eq!(plan.server.tun_ip, "10.57.21.1");
         // The interface is named after the octet that identifies the tunnel.
         assert_eq!(plan.tun_name, "candy57");
-        // Spoofing is off by default, so each side uses its own address.
-        assert_eq!(plan.client.spoofed_ip, "192.0.2.10");
-        assert_eq!(plan.server.spoofed_ip, "198.51.100.5");
+        // Faking is off by default, so each side uses its own address.
+        assert_eq!(plan.client.faked_ip, "192.0.2.10");
+        assert_eq!(plan.server.faked_ip, "198.51.100.5");
     }
 
     #[test]
